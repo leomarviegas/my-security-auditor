@@ -1,197 +1,165 @@
 # Contributing to my-security-auditor
 
-Thank you for your interest in contributing! This skill benefits from community expertise — new frameworks, TTPs, detection patterns, and corrections are all valuable contributions.
+Thank you for considering a contribution! This skill is most valuable when it reflects diverse security expertise from the community.
 
-## Ways to contribute
+## What we welcome
 
-### 1. Report bugs or inaccuracies
-- Open a [bug report issue](../../issues/new?template=bug_report.md)
-- Include the framework reference, specific section, and what's wrong
-- For factual corrections, cite the authoritative source
+- **New framework references** — regulations, standards, methodologies we don't yet cover
+- **Updates to existing references** — keeping content current with new versions (OWASP updates, NIST revisions, new CVSS versions)
+- **Bug fixes** — corrections to technical content, broken cross-references, typos
+- **Better examples** — concrete, realistic scenarios that improve findings
+- **New test techniques** — additions to existing frameworks (e.g., new JWT attacks, new GraphQL abuses)
+- **Translations** — particularly for privacy regulation deep-dives
+- **Tooling improvements** — scripts for packaging, validation, or testing
 
-### 2. Request new frameworks or coverage
-- Open a [framework request issue](../../issues/new?template=framework_request.md)
-- Explain why the framework matters and for which audit scenarios
-- Provide links to authoritative documentation
+## What we generally decline
 
-### 3. Improve existing references
-- Add missing TTPs or test scenarios
-- Update deprecated information
-- Improve examples and code samples
-- Fix typos and formatting
+- Vendor-specific marketing content (we prefer tool-agnostic guidance)
+- Content that conflicts with the skill's safety posture (e.g., "how to exploit without authorization")
+- Duplicative frameworks that don't add unique value
+- Changes that break progressive disclosure (e.g., making SKILL.md 2000 lines)
 
-### 4. Add new framework references
-- Follow the style guide below
-- Match the structure of existing framework files
-- Include authoritative references
+## How to contribute
 
-## Contribution workflow
+### Small changes (typos, corrections, minor additions)
 
-1. **Open an issue first** — discuss significant changes before implementing
-2. **Fork the repository**
-3. **Create a feature branch:**
+1. Fork the repository
+2. Make your change on a feature branch
+3. Open a pull request with a clear description
+4. Reference any issue your change addresses
+
+### Adding a new framework reference
+
+New framework references are substantial contributions. Before writing, **open an issue** first to discuss:
+
+1. What framework or standard you want to add
+2. Why it's valuable (what gap it fills, who benefits)
+3. How it relates to existing references
+4. Rough outline of sections
+
+Once approved:
+
+1. Follow the structure of existing references in `my-security-auditor/references/frameworks/`
+2. Include a Table of Contents
+3. Organize with clear numbered sections
+4. End with a findings mapping template showing how to annotate findings using this framework
+5. Keep each reference under ~1,500 lines (split if needed)
+6. Add cross-references to related files
+7. Update `SKILL.md` to add your reference to the framework table
+8. Update `docs/FRAMEWORKS.md` with a summary entry
+9. Add an entry to `CHANGELOG.md` under `[Unreleased]`
+
+### Style guide
+
+**Tone:**
+- Direct, professional, technical
+- Assume the reader is a competent security practitioner
+- Don't hedge with "it might be considered" when you mean "it is"
+- Be willing to have opinions (e.g., "use AES-only Kerberos to prevent T1558.003")
+
+**Structure:**
+- Short paragraphs over dense blocks
+- Use tables for comparative information
+- Code blocks for commands, requests, responses
+- Checklists for actionable items
+- End sections with "findings mapping" examples where relevant
+
+**Framework mappings:**
+Every framework reference should support tagging findings with that framework. Include:
+- What to tag (OWASP category? CWE? control ID?)
+- Template for including in finding reports
+- Example findings with mappings
+
+**What to avoid:**
+- Marketing-style "this framework is the industry-leading solution for..."
+- Vague statements without actionable content ("ensure proper security controls")
+- Duplicating content from other references (cross-reference instead)
+- Tool-specific tutorials (keep it methodology-focused)
+
+### Testing changes locally
+
+The skill loads when Claude detects relevant triggers. To test changes:
+
+1. **Package the skill:**
    ```bash
-   git checkout -b add-framework-xyz
+   # Requires Anthropic's skill-creator package
+   python3 -m scripts.package_skill ./my-security-auditor ./dist/
    ```
-4. **Make your changes** following the style guide
-5. **Test locally:**
+
+2. **Install locally:**
    ```bash
-   # Validate SKILL.md description length (must be under 1024 chars)
-   # Validate references load correctly
-   # Test skill installation
+   unzip -o dist/my-security-auditor.skill -d ~/.claude/skills/
    ```
-6. **Commit with clear messages:**
-   ```bash
-   git commit -m "Add framework: XYZ Security Guidelines"
-   ```
-7. **Open a Pull Request** using the PR template
-8. **Respond to review feedback**
 
-## Style guide for framework references
+3. **Test activation** by asking Claude to perform a security audit on a test target, or by explicitly mentioning the framework your change relates to
 
-### File naming
-- Lowercase with hyphens: `api-security.md`, `cloud-security.md`
-- Descriptive but concise
-- Match the content focus
+4. **Verify the change** loads correctly and produces the expected guidance
 
-### Structure
-Every framework reference should have:
+### Pull request checklist
 
-```markdown
-# Framework Name
+Before submitting:
 
-Brief introduction — what this covers, when to use it.
+- [ ] Content technically accurate and up-to-date
+- [ ] No claims without support (link to authoritative source where possible)
+- [ ] Follows existing file structure and style
+- [ ] `SKILL.md` framework table updated (if adding new reference)
+- [ ] `docs/FRAMEWORKS.md` updated (if adding new reference)
+- [ ] `CHANGELOG.md` updated
+- [ ] File stays under ~1,500 lines (split large contributions)
+- [ ] Cross-references to related files included
+- [ ] No vendor marketing or adversarial content
+- [ ] Tested locally with `package_skill.py`
 
-## Table of Contents
-1. [Overview](#1-overview)
-2. [Core concepts](#2-core-concepts)
-...
+## Issue reporting
 
----
+### Bug reports
 
-## 1. Overview
-[Background and context]
+Please include:
+- Exact location (file path, line number, or section)
+- What is incorrect or outdated
+- What it should say instead (if known)
+- Source/reference for the correction (where applicable)
 
-## 2. Core concepts
-[Key terminology and ideas]
+Use the bug report template in `.github/ISSUE_TEMPLATE/`.
 
-## N. [Topic-specific sections]
-[Testing methodology, checklists, examples]
+### Feature requests
 
-## N+1. [Framework] Checklist
-```
-[ ] Item 1
-[ ] Item 2
-```
+For new frameworks or significant additions:
+- Use the framework request template
+- Describe the gap the addition fills
+- Explain who benefits
 
----
+## Review process
 
-## Mapping [Framework] Findings
-
-### Finding annotation template
-```
-Framework-specific mappings:
-  - [field]: [example]
-```
-
-### Common finding patterns
-| Finding | Maps to |
-|---------|---------|
-| Example | Framework category |
-```
-
-### Writing style
-- **Concrete over abstract** — specific commands, payloads, examples
-- **Testable over theoretical** — if it can't be tested, question if it belongs
-- **Current** — reference current versions of standards (not old ones)
-- **Neutral** — describe what defenders and attackers do, not what they "should"
-- **Authoritative links** — link to the original standard, not secondary sources
-
-### Length guidelines
-- SKILL.md should stay under 500 lines (orchestrator, not content)
-- Framework references can be long (500-1500 lines is typical)
-- Single reference should cover one framework or closely related family
-- Split if coverage diverges significantly
-
-### Code examples
-- Use realistic code, not pseudocode
-- Include both vulnerable and fixed versions when relevant
-- Language syntax highlighting with triple backticks
-- Real command syntax that actually works
-
-### Tables
-- Use tables for comparative data
-- Keep rows under ~100 characters for readability
-- Use consistent formatting across references
-
-## Testing your changes
-
-### Validate the packaged skill
-```bash
-cd /path/to/repo
-
-# Package using skill-creator tooling
-python3 -m scripts.package_skill ./my-security-auditor ./dist/
-
-# Verify it builds without errors
-# Validation will flag description > 1024 chars, malformed YAML, etc.
-```
-
-### Test in Claude Code
-```bash
-# Install your modified version
-unzip dist/my-security-auditor.skill -d ~/.claude/skills/
-
-# Trigger the skill with test prompts related to your changes
-# Verify that your new content loads and is referenced correctly
-```
-
-### Review checklist
-Before opening a PR, verify:
-- [ ] SKILL.md description is under 1024 characters
-- [ ] New references are mentioned in SKILL.md framework table
-- [ ] New references follow the style guide structure
-- [ ] Cross-references to other framework files are valid
-- [ ] Authoritative sources are linked
-- [ ] Examples work as written
-- [ ] No typos or formatting issues
-- [ ] CHANGELOG.md updated with your change
-
-## Pull request guidelines
-
-### PR title
-Use conventional prefixes:
-- `feat:` new feature or framework
-- `fix:` bug fix or correction
-- `docs:` documentation improvement
-- `refactor:` restructuring without behavior change
-- `style:` formatting, typos
-- `test:` test additions
-
-Examples:
-- `feat: Add FedRAMP compliance framework`
-- `fix: Correct CVSS v4.0 vector example in api-security.md`
-- `docs: Improve installation instructions for team deployments`
-
-### PR description
-Include:
-- **What** you changed
-- **Why** you changed it
-- **How** to test the change
-- **References** to sources/issues
-
-### Review process
-- Maintainer review within 1-2 weeks
-- Changes may be requested
-- Squash merge is typical for clean history
+- Pull requests typically receive initial feedback within 1-2 weeks
+- Larger additions (new frameworks) may take longer
+- All contributions are reviewed for accuracy, style, and fit
+- You may be asked to make revisions before merging
+- Your contributions will be attributed in the CHANGELOG
 
 ## Code of Conduct
 
-This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md). Please review and follow it.
+This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code.
+
+## Licensing
+
+By contributing, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE), the same license as the rest of the project.
+
+## Recognition
+
+Contributors are acknowledged in:
+- The `CHANGELOG.md` for each release
+- Git commit history (permanent record)
+- The `CONTRIBUTORS.md` file (for significant contributions)
 
 ## Questions?
 
-- Open a [discussion issue](../../issues/new?template=feature_request.md)
-- Security-sensitive issues: see [SECURITY.md](SECURITY.md)
+Open a [discussion](https://github.com/leomarviegas/my-security-auditor/discussions) or an issue labeled `question`. We're happy to help.
 
-Thank you for contributing!
+## Attribution for framework content
+
+When contributing content derived from OWASP, MITRE, NIST, or other published standards:
+- Link to the original source
+- Paraphrase rather than copying verbatim
+- Respect the original license (most are permissive but verify)
+- Update `NOTICE` if adding a new framework source
