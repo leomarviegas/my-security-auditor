@@ -1,0 +1,48 @@
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.iml
+
+# Python (if using skill-creator scripts)
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Node (if any tooling added)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Build artifacts
+dist/
+build/
+*.skill
+*.zip
+
+# Local testing output
+/tmp/
+*.log
+
+# Skill-creator scratch directories
+.skill-tmp/
+
+# Local env files (never commit secrets)
+.env
+.env.local
+.env.*.local
+
+# OS metadata
+.AppleDouble
+.LSOverride
+._*
+
+# IDE
+.history/
+.ionide/
