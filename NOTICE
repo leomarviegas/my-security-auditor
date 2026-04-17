@@ -1,0 +1,41 @@
+my-security-auditor
+Copyright 2026 Leomar Viegas Junior
+
+This product includes security testing methodology and framework references derived
+from the following open standards and community resources. The frameworks themselves
+are owned by their respective organizations; this skill consolidates testing guidance
+informed by their publicly available documentation.
+
+OWASP Foundation (https://owasp.org/)
+  - OWASP Top 10, ASVS, SAMM, WSTG, MASVS, API Security Top 10, Mobile Top 10,
+    LLM Top 10, Cloud-Native Top 10, Kubernetes Top 10
+  - Licensed under Creative Commons Attribution-ShareAlike 4.0
+
+MITRE Corporation (https://www.mitre.org/)
+  - ATT&CK, D3FEND, CALDERA, CWE, CAPEC
+  - Licensed per MITRE terms for public use
+
+NIST (https://www.nist.gov/)
+  - Cybersecurity Framework 2.0, SP 800-53, SP 800-61, Risk Management Framework
+  - U.S. Government work, public domain
+
+ISO/IEC
+  - ISO 27001, 27002, 27701, 27017, 27018, 27005, 27035 referenced by name only
+
+CIS (https://www.cisecurity.org/)
+  - CIS Controls, CIS Benchmarks referenced for context
+
+Cloud Security Alliance (https://cloudsecurityalliance.org/)
+  - Cloud Controls Matrix, CAIQ, STAR framework
+
+Red Canary (https://redcanary.com/)
+  - Atomic Red Team testing library referenced
+
+ISECOM (https://www.isecom.org/)
+  - OSSTMM with RAV methodology
+
+The skill itself (orchestration, workflow, consolidation, and original writing) is
+licensed under the Apache License, Version 2.0. See LICENSE file for terms.
+
+Users of this skill are responsible for ensuring their use of any referenced framework
+complies with the respective framework's licensing terms.
