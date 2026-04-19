@@ -3,14 +3,15 @@ name: my-security-auditor
 description: >
   Comprehensive authorized security audit skill covering web, APIs, cloud, Kubernetes, mobile,
   AI/LLM, microservices, SaaS (multi-tenancy, SSO, BYOK), plus red/blue/purple team operations,
-  source code review, and formal AppSec testing (SAST/DAST/IAST/RASP/SCA). Integrates OWASP (Top 10,
-  API/Mobile/LLM/Cloud/K8s, ASVS, SAMM, WSTG, MASVS), MITRE ATT&CK + D3FEND, OSSTMM with RAV,
-  NIST RMF/CSF, FAIR, ISO 27001 family, CVSS/EPSS/SSVC, Zero Trust, SOC 1/2/3, PCI-DSS v4.0.1,
+  source code review, AppSec testing (SAST/DAST/IAST/RASP/SCA), and network auditing (namespaces,
+  services inventory, traffic flows, VPNs, NetworkPolicies, iptables/nftables). Integrates OWASP
+  (Top 10, API/Mobile/LLM/Cloud/K8s, ASVS, SAMM, WSTG, MASVS), MITRE ATT&CK + D3FEND, OSSTMM with
+  RAV, NIST RMF/CSF, FAIR, ISO 27001 family, CVSS/EPSS/SSVC, Zero Trust, SOC 1/2/3, PCI-DSS v4.0.1,
   GDPR/LGPD/CCPA/HIPAA privacy, customer trust (DPAs, CAIQ/SIG, VDPs), SOC ops, detection engineering,
-  threat hunting, adversary emulation (CALDERA, Atomic Red Team, BAS), code review (taint analysis,
-  per-language patterns, git history, config-as-code), SBOM/SPDX/CycloneDX. Triggers: "security audit",
-  "pentest", "code review", "SAST", "DAST", "SCA", "red team", "blue team", "purple team", "threat
-  hunting", "OWASP", "ISO 27001", "SOC 2", "GDPR", "LGPD", "SaaS security", "MITRE ATT&CK".
+  threat hunting, adversary emulation (CALDERA, Atomic Red Team, BAS), code review, SBOM/SPDX/CycloneDX.
+  Triggers: "security audit", "pentest", "code review", "SAST", "DAST", "SCA", "red team", "blue team",
+  "purple team", "threat hunting", "OWASP", "ISO 27001", "SOC 2", "GDPR", "LGPD", "SaaS security",
+  "MITRE ATT&CK", "network audit", "firewall audit", "iptables", "nftables", "NetworkPolicy", "VPN".
 ---
 
 # Security Auditor
@@ -56,6 +57,7 @@ Read the relevant reference files based on the phase you're entering:
 | Purple team / continuous validation | `references/frameworks/purple-team.md` |
 | Source code access / code review | `references/frameworks/code-analysis.md` |
 | AppSec testing methods (SAST/DAST/IAST/RASP/SCA) | `references/frameworks/appsec-testing-methods.md` |
+| Network auditing (Linux hosts, K8s, VPN, firewalls) | `references/frameworks/network-security-audit.md` — Linux `netns` enumeration, K8s intra/extra-namespace access testing, host and cluster service inventory, end-to-end traffic flow journeys (pod-to-pod, pod-to-external, node-to-node, VPN, user-to-app), NetworkPolicy auditing with default-deny baseline and CNI/service-mesh extensions (Cilium, Calico, Antrea, Istio, Linkerd, Consul), host firewall review (iptables, nftables, firewalld, UFW, pf, Windows Firewall) with cloud-layer adjunct (AWS SG/NACL, GCP, Azure NSG), dual-stack IPv6 coverage, IKEv1/PSK/cipher audit for site-to-site VPN |
 | Architecture assessment | `references/frameworks/zero-trust.md` |
 | Security design review | `references/frameworks/security-architecture.md` |
 | VM process assessment | `references/frameworks/vulnerability-management.md` |
@@ -84,6 +86,11 @@ Before doing anything, confirm scope with the user. This is non-negotiable.
    - **No code access** — black-box testing only
    - **Read-only code access** — enables white-box code review (add Phase 0.5, load `references/frameworks/code-analysis.md`)
    - **Code + deployment access** — enables full SAST/DAST/IAST/SCA coverage (also load `references/frameworks/appsec-testing-methods.md`)
+8. **Network / infrastructure access** — what network-layer access is granted?
+   - **None** — external perspective only (port scans, TLS review, DNS)
+   - **Node / shell access** — enables host firewall audit, netns enumeration, iptables/nftables review (load `references/frameworks/network-security-audit.md`)
+   - **Kubernetes cluster access** — enables NetworkPolicy audit, intra/extra-namespace testing, service inventory (load `references/frameworks/network-security-audit.md` + `references/frameworks/kubernetes-security.md`)
+   - **Cloud API access** — enables security group / NACL / flow log review (load `references/frameworks/cloud-security.md` + `references/frameworks/network-security-audit.md`)
 
 ### Scope template
 ```
@@ -98,6 +105,7 @@ Testing posture: [passive / light-probe / active-safe]
 Auth available: [yes — test accounts provided / no — unauthenticated only]
 Engagement type: [vulnerability assessment / pentest / red team / blue team / purple team]
 Source code access: [none / read-only / full]
+Network/infra access: [none / node-shell / kubectl / cloud-api]
 ```
 
 If the user hasn't confirmed authorization, ask. Do not proceed without it.
@@ -124,6 +132,7 @@ If the user hasn't confirmed authorization, ask. Do not proceed without it.
 - CORS/CSRF/authn/authz analysis
 - Parameter tampering at low rate
 - Passive recon and differential response analysis
+- Network-layer reads on authorized hosts (`ss`, `iptables -L`, `kubectl get netpol`)
 
 ### False positive discipline
 Before finalizing any finding:
@@ -152,12 +161,13 @@ Only run this phase when Step 0 identified read-only or full code access.
 - Review CI/CD configuration for security posture clues
 - Run initial SCA / dependency audit
 - Generate codebase map document
+- **If network-as-code is present** (Terraform security groups, NetworkPolicy manifests, Cilium/Calico CRDs, iptables-as-Ansible) — inventory declared rules to compare against runtime state in Phase 3
 
 **Read `references/frameworks/code-analysis.md`** for full methodology.
 
 **Optionally read `references/frameworks/appsec-testing-methods.md`** for SAST/DAST/IAST/SCA tooling.
 
-**Outputs:** Codebase map, entry point inventory, initial SCA findings.
+**Outputs:** Codebase map, entry point inventory, initial SCA findings, declared-network-rules inventory.
 
 ### Phase 1: Recon Bootstrap
 
@@ -165,7 +175,9 @@ Start at each in-scope root URL and gather baseline information.
 
 **Objectives:** capture redirects, robots.txt/sitemap.xml/security.txt, HTTP headers, cookie behavior, framework hints, JS bundles and source maps, trust boundaries between hosts.
 
-**Infrastructure detection** determines which framework references to load (cloud, Kubernetes, microservices, AI/LLM, mobile, SaaS, privacy-regulated).
+**Infrastructure detection** determines which framework references to load (cloud, Kubernetes, microservices, AI/LLM, mobile, SaaS, privacy-regulated, **network surface**).
+
+For network surface: if Step 0 granted node/kubectl/cloud-api access, produce an early inventory of listening services, K8s namespaces, firewall state, and NetworkPolicy coverage — this feeds Phase 3's systematic review.
 
 **Outputs:** `recon-summary.md` with infrastructure signals.
 
@@ -197,6 +209,14 @@ Test systematically against all applicable security frameworks.
 - Mobile → `mobile-security.md`
 - AI/LLM → `ai-llm-security.md`
 
+**Network-layer testing** (apply if node/kubectl/cloud-api access granted in Step 0):
+- Read `references/frameworks/network-security-audit.md` for systematic network review across five dimensions:
+  1. **Intra and extra namespace access** — Linux `netns` enumeration, K8s intra-namespace (pod→pod within ns) and extra-namespace (pod→pod cross-ns, pod→kube-system, pod→external) testing, `hostNetwork`/`hostPort`/capability review
+  2. **Network services inventory** — host listening sockets per netns, K8s Services (all types), Ingress/Gateway API, Endpoints, NodePort enumeration, external scan cross-reference
+  3. **Traffic flow journeys** — end-to-end trace for pod-to-pod (same + cross namespace), pod-to-external, node-to-node (control plane + data plane overlay), site-to-site VPN (IPsec/WireGuard/OpenVPN), user-to-application (DNS→CDN→WAF→LB→Ingress→pod)
+  4. **NetworkPolicy auditing** — default-deny baseline verification, selector correctness, CIDR rules with RFC1918/metadata-service exclusions, CNI extensions (CiliumNetworkPolicy, Calico GlobalNetworkPolicy, Antrea), service-mesh L7 policies (Istio AuthorizationPolicy, Linkerd Server, Consul ServiceIntentions), empirical effectiveness testing with netshoot
+  5. **Firewall auditing** — iptables (all tables, chain ordering, logging), nftables (inet family, sets, maps), firewalld (zones, rich rules), UFW, pf, Windows Firewall, dual-stack IPv6 coverage, cloud-layer adjunct (AWS SG/NACL, GCP firewall rules, Azure NSG), drift between IaC and runtime
+
 **Engagement-type-specific:**
 - Red team → `red-team.md`
 - Blue team → `blue-team.md`
@@ -216,6 +236,8 @@ Test systematically against all applicable security frameworks.
 
 Connect findings into realistic attacker paths: recon → foothold → privilege escalation → data access → persistence.
 
+Network findings frequently become critical chain components — e.g., SSRF in app + unrestricted pod egress + reachable cloud metadata = credential compromise chain.
+
 **Outputs:** Documented attack chains with severity and remediation priority.
 
 ### Phase 5: Multi-Model Cross-Review
@@ -234,6 +256,8 @@ One model proposes findings, at least two others challenge, a false-positive rev
 **Deliverables:** executive summary, asset/route inventory, internal link sweep, findings report with framework mappings, attack chains, remediation plan, evidence bundle.
 
 **Framework enrichment per finding:** OWASP category, CWE, CVSS v4.0, MITRE ATT&CK, OSSTMM classification, NIST 800-53, ISO 27001 Annex A, SOC 2 CC mapping, PCI-DSS requirement, SaaS tenancy impact, privacy regulation mapping, remediation SLA.
+
+For network findings specifically: include the exact rule / NetworkPolicy / manifest reference (file, line, resource name), affected source and destination, a proposed replacement rule in applicable YAML or iptables/nftables syntax, and MITRE ATT&CK mapping (typically Lateral Movement TA0008, Network Service Discovery T1046, Exfiltration Over C2 Channel T1041).
 
 If OSSTMM is in scope, include an **overall RAV score** in the executive summary.
 
@@ -262,13 +286,13 @@ If OSSTMM is in scope, include an **overall RAV score** in the executive summary
 ## Key Principles
 
 ### Think like an attacker
-Prioritize auth bypass, account takeover, sensitive data, admin access, IDOR, weak sessions, dangerous cross-origin trust, business logic flaws with real impact.
+Prioritize auth bypass, account takeover, sensitive data, admin access, IDOR, weak sessions, dangerous cross-origin trust, business logic flaws with real impact, **lateral movement paths in flat networks**.
 
 ### Reject low-value noise
 Don't over-report generic banners, speculative dependency issues without exploit path, or missing headers with negligible risk when compensating controls exist.
 
 ### Think in trust boundaries
-For every finding, ask: what does the browser trust? What does the app trust? What does the API trust? What user-controlled inputs cross those boundaries? What assumptions fail?
+For every finding, ask: what does the browser trust? What does the app trust? What does the API trust? What does the pod trust? What does the namespace trust? What user-controlled inputs cross those boundaries? What assumptions fail?
 
 ### Vibecoder awareness
-Assume the codebase may have been built quickly with AI assistance. Look for: secrets in frontend bundles, auth checks only in UI, missing ownership checks, debug behavior in production, over-permissive CORS, "TODO add auth" behaviors.
+Assume the codebase may have been built quickly with AI assistance. Look for: secrets in frontend bundles, auth checks only in UI, missing ownership checks, debug behavior in production, over-permissive CORS, "TODO add auth" behaviors, **missing NetworkPolicies, unrestricted pod egress, cloud metadata service reachable from pods**.
