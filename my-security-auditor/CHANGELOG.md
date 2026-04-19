@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [1.2.0] — 2026-04-18
+
+### Added
+
+- **`references/frameworks/network-security-audit.md`** — Network-layer security auditing reference. Covers Linux network namespaces (`netns`) and Kubernetes namespaces (enumeration, intra- and extra-namespace access testing, `hostNetwork` / `hostPort` / capability review); network services inventory at host and cluster level (listening sockets, Services, Ingress, Gateway API, Endpoints, NodePort enumeration); end-to-end traffic flow journeys (pod-to-pod same namespace, pod-to-pod cross namespace, pod-to-external, node-to-node control/data plane, site-to-site VPN with IPsec/WireGuard/OpenVPN, user-to-application through DNS/CDN/WAF/LB/Ingress); NetworkPolicy auditing (default-deny baseline, coverage checks, CIDR rules, Cilium/Calico/Antrea CRD extensions, Istio/Linkerd/Consul L7 policies, empirical effectiveness testing); host firewall auditing (iptables, nftables, firewalld, UFW, pf, Windows Firewall, dual-stack IPv6 coverage, cloud-layer firewall adjunct review for AWS/GCP/Azure).
+
+### Changed
+
+- **SKILL.md framework table** adds a row for `network-security-audit.md` with the trigger phrases for network auditing (namespace access, service inventory, traffic flow journeys, network policies, firewall auditing, VPN review, iptables, nftables).
+
+- **SKILL.md Phase 3** now routes to `network-security-audit.md` when the target has Linux hosts, Kubernetes clusters, VPN infrastructure, or any scenario requiring network-layer isolation validation. This complements the existing routing to `kubernetes-security.md` (which covers RBAC and API surface but not the network plane in depth) and `cloud-security.md` (which covers cloud-level filters but not host firewalls or K8s NetworkPolicies).
+
+### File count
+
+- 32 files total, approximately 22,000 lines
+- 1 `SKILL.md` + 5 core workflow references + 26 framework references
+
+---
+
 ## [1.1.0] — 2026-04-18
 
 ### Added
@@ -86,5 +105,6 @@ Initial release with 29 files covering:
 - `blue-team.md` — SOC operations, SOC-CMM, detection engineering, SIEM/EDR/XDR
 - `purple-team.md` — Atomic Red Team, CALDERA, BAS, adversary emulation
 
+[1.2.0]: https://github.com/leomarviegas/my-security-auditor/releases/tag/v1.2.0
 [1.1.0]: https://github.com/leomarviegas/my-security-auditor/releases/tag/v1.1.0
 [1.0.0]: https://github.com/leomarviegas/my-security-auditor/releases/tag/v1.0.0
