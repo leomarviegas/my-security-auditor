@@ -9,8 +9,9 @@ This reference covers network-layer auditing across five dimensions: namespace a
 4. [Traffic Flow Journeys](#4-traffic-flow-journeys)
 5. [Network Policy Auditing](#5-network-policy-auditing)
 6. [Host Firewall Auditing](#6-host-firewall-auditing)
-7. [Integration with Audit Phases](#7-integration-with-audit-phases)
-8. [Network Security Checklist](#8-network-security-checklist)
+7. [WAF, Load Balancer, and API Gateway Auditing](#7-waf-load-balancer-and-api-gateway-auditing)
+8. [Integration with Audit Phases](#8-integration-with-audit-phases)
+9. [Network Security Checklist](#9-network-security-checklist)
 
 ---
 
@@ -1130,13 +1131,607 @@ If IPv6 is enabled on an interface but no v6 rules exist, the host is effectivel
 
 ---
 
-## 7. Integration with Audit Phases
+## 7. WAF, Load Balancer, and API Gateway Auditing
+
+The edge — where traffic enters the application — is usually the most exposed surface and the most frequently attacked. Audit every component that sits between the internet and the application: CDN, WAF, load balancer, reverse proxy, API gateway, ingress controller. A misconfigured edge device or an unpatched WAF appliance is one of the top-3 initial access vectors industry-wide.
+
+### 7.1 Edge architecture inventory
+
+First map what is actually in the request path. Ask the team, but also verify empirically — the documented architecture and the running architecture are often different.
+
+```bash
+# HTTP response header fingerprinting
+curl -sI https://app.example.com/ | grep -iE 'server|via|x-cache|x-served-by|x-cdn|cf-ray|x-amz-cf-id|x-azure|x-goog|x-varnish|x-envoy|x-kong|x-trace'
+
+# Common fingerprints:
+#   cloudflare / CF-Ray            → Cloudflare
+#   AkamaiGHost                    → Akamai
+#   Fastly / x-served-by: cache-*  → Fastly
+#   x-amz-cf-id / x-amz-cf-pop     → AWS CloudFront
+#   Google Frontend / GFE          → GCP Load Balancer
+#   Microsoft-IIS / ARR            → Azure / IIS
+#   envoy                          → Envoy (Istio, Ambassador, Gateway API, etc.)
+#   nginx                          → NGINX or ingress-nginx
+#   haproxy                        → HAProxy
+#   BigIP / F5-TrafficShield       → F5 BIG-IP
+#   kong                           → Kong API Gateway
+
+# DNS + CNAME chain reveals CDN/LB topology
+dig app.example.com +trace
+dig +short CNAME app.example.com
+
+# TLS certificate + SNI often discloses infrastructure
+openssl s_client -connect app.example.com:443 -servername app.example.com < /dev/null 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
+
+# TRACE / TRACK (if enabled) expose intermediate hops
+curl -X TRACE https://app.example.com/
+```
+
+**Common edge architectures to expect:**
+
+| Architecture | Layers (outermost → innermost) |
+|--------------|-------------------------------|
+| Simple cloud | Client → Cloud LB → Origin |
+| CDN-fronted | Client → CDN → Cloud LB → Origin |
+| CDN + WAF | Client → CDN + WAF → Cloud LB → Origin |
+| K8s + CDN | Client → CDN + WAF → Cloud LB → Ingress Controller → Service → Pod |
+| Service mesh | Client → CDN + WAF → Cloud LB → Istio/Envoy Gateway → sidecar → Pod |
+| API-only | Client → API Gateway (Kong/Apigee/AWS APIGW) → Backend |
+| Hybrid (common) | Client → CDN + WAF → Cloud LB → API Gateway → K8s Service → Pod |
+
+Diagram the actual topology. Each layer is a trust boundary and a decryption/inspection point.
+
+### 7.2 WAF auditing
+
+**WAF product recognition:**
+
+| Category | Products |
+|----------|----------|
+| Cloud-native WAF | AWS WAF (WebACLv2 + managed rule groups), Azure WAF (Front Door + App Gateway), Google Cloud Armor, Oracle WAF |
+| CDN-integrated WAF | Cloudflare WAF + Firewall Rules, Akamai Kona / App & API Protector, Fastly Next-Gen WAF (Signal Sciences), Imperva (Incapsula), Sucuri |
+| Appliance / software WAF | F5 Advanced WAF / ASM / Distributed Cloud WAAP, Fortinet FortiWeb, Barracuda WAF, Radware AppWall, Citrix Web App Firewall |
+| OSS / self-hosted | ModSecurity v2/v3 + OWASP CRS 4.x, Coraza (Go port of ModSec), NAXSI, OpenAppSec, BunkerWeb |
+| API-specific WAF / WAAP | Salt Security, Noname, Wallarm, 42Crunch, Traceable AI, Corsha |
+| In-cluster / runtime | ingress-nginx + ModSecurity, Envoy WASM filters, Kuma, OPA at L7 |
+
+**What to audit:**
+
+```
+[ ] Is the WAF actually in the path for ALL ingress? (No direct-to-origin bypass — tested in 7.2.1)
+[ ] Mode: detection-only (logging) vs prevention (blocking)? Most misconfigs sit in detect mode for months.
+[ ] Managed rule group coverage: OWASP Top 10, known bad bots, virtual patches for unpatched CVEs
+[ ] Custom rules: regex quality, ReDoS risk, maintenance cadence
+[ ] Rule evaluation order: does a broad ALLOW precede narrower BLOCK rules?
+[ ] Body inspection size limit (typically 8-64 KB) — bodies above the limit often pass unchecked
+[ ] Parameter parsing coverage: JSON, XML, multipart, GraphQL, nested bodies, form-urlencoded
+[ ] Encoding normalization: URL encoding, double encoding, Unicode, case variation
+[ ] HTTP method coverage: GET/POST usually; PUT/DELETE/PATCH/OPTIONS often ignored
+[ ] HTTP/2 and HTTP/3 request handling (some WAFs only inspect HTTP/1.1 properly)
+[ ] WebSocket upgrade path — frequently exempt from WAF inspection
+[ ] gRPC / protobuf content inspection (almost never done)
+[ ] Rate limiting: per-IP, per-session, per-API-key, per-endpoint
+[ ] Bot management: JS challenges, CAPTCHA, fingerprinting, managed bot rule groups
+[ ] Geo-blocking if required by compliance (sanctions lists, data residency)
+[ ] IP allowlist / denylist with current context
+[ ] TLS termination: pass-through (WAF cannot inspect) vs re-terminate
+[ ] Upstream X-Forwarded-For: correctly appended; origin trusts only WAF/LB source IP
+[ ] Logging: full request capture or just matched rules?
+[ ] SIEM integration and alerting on rule matches + anomalies
+[ ] Virtual patches applied for known upstream CVEs (Log4Shell, Spring4Shell, Struts, etc.)
+[ ] False-positive tuning process — who tunes, how often, what's the approval chain
+[ ] Continuous bypass testing on each deploy (CI integration with gotestwaf, nowafpls)
+```
+
+#### 7.2.1 Direct-to-origin bypass test (critical)
+
+If the origin is reachable directly — bypassing the CDN/WAF — the WAF is effectively optional. This is one of the highest-impact WAF findings and should always be tested.
+
+```bash
+# Methods to discover the origin IP:
+#   1. Historical DNS records (SecurityTrails, Shodan "ssl.cert.subject.cn", Censys)
+#   2. TLS certificate transparency logs (crt.sh for the apex + subdomains)
+#   3. Mail servers — MX records often point directly at origin
+#   4. GitHub / GitLab commits leaking IPs in config files or docker-compose.yml
+#   5. Application SSRF (ask a deployed function to fetch a canary)
+#   6. Misconfigured dev/staging/preview subdomains that bypass the CDN
+#   7. Favicon hash matching on Shodan / Censys
+
+# Once a candidate origin IP is identified, test bypass:
+curl -sk --resolve app.example.com:443:<origin-ip> https://app.example.com/ -o /dev/null -w '%{http_code}\n'
+# If it returns the real application (200, 302 to login, etc.), the WAF is bypassed.
+
+# Mitigation that MUST be present at origin:
+#   (a) Refuse connections not from CDN IP ranges — Cloudflare IP list, CloudFront prefix
+#       list, Fastly IP list, Akamai IP list. Enforce at cloud SG, not just at nginx allow/deny.
+#   (b) OR require mTLS with a cert that only the CDN possesses (Cloudflare Authenticated
+#       Origin Pulls, Fastly TLS Mutual Auth).
+#   (c) OR require a shared secret header the CDN adds and origin validates.
+# "Security through origin IP obscurity" alone is not a defence.
+```
+
+#### 7.2.2 ModSecurity / OWASP CRS audit
+
+```bash
+# Config locations (varies by distro / integration)
+cat /etc/modsecurity/modsecurity.conf
+cat /etc/modsecurity.d/*.conf
+ls /usr/share/modsecurity-crs/rules/
+
+# Key settings
+grep -rE 'SecRuleEngine|SecRequestBodyLimit|SecResponseBodyAccess|SecAuditEngine|SecDefaultAction' \
+    /etc/modsecurity/
+
+# Rule exclusions — where false-positive reduction often crosses into false-negative risk
+grep -rE 'SecRuleRemoveById|SecRuleRemoveByTag|SecRuleUpdateTargetById' /etc/modsecurity/
+
+# Paranoia level (1-4, higher = more strict, higher FP rate)
+grep -rE 'tx.paranoia_level' /etc/modsecurity/
+# PL1 default light; PL2 sensible for most; PL3/PL4 very strict, expect tuning
+
+# CRS version
+head -5 /usr/share/modsecurity-crs/rules/REQUEST-901-INITIALIZATION.conf
+```
+
+**Red flags:**
+- `SecRuleEngine DetectionOnly` (observation only, not blocking)
+- `SecRequestBodyLimitAction ProcessPartial` without alerting (large body → silent pass-through)
+- Wildcard exclusions like `SecRuleRemoveById 9*` (removes entire rule ranges)
+- Missing CRS rule groups: REQUEST-942 (SQLi), REQUEST-941 (XSS), REQUEST-930 (LFI), REQUEST-932 (RCE)
+- Paranoia level forced to 0 or 1 without justification
+
+#### 7.2.3 AWS WAF audit
+
+```bash
+# Regional WebACLs (ALB, API Gateway, Cognito, App Runner, AppSync)
+aws wafv2 list-web-acls --scope REGIONAL
+
+# CloudFront WebACLs (always us-east-1)
+aws wafv2 list-web-acls --scope CLOUDFRONT --region us-east-1
+
+# Dump ACL detail
+aws wafv2 get-web-acl --scope REGIONAL --id <id> --name <n>
+
+# Resources protected by each ACL
+aws wafv2 list-resources-for-web-acl --web-acl-arn <arn> --scope REGIONAL
+
+# Logging configuration
+aws wafv2 get-logging-configuration --resource-arn <acl-arn>
+```
+
+**Red flags:**
+- No WebACL attached to ALB / CloudFront / API Gateway
+- All managed rule groups in `COUNT` mode (observation only, no blocking)
+- `DefaultAction: Allow` combined with overly permissive custom rules
+- No logging to CloudWatch Logs or Kinesis Firehose → no audit trail
+- Missing AWSManagedRulesCommonRuleSet, AWSManagedRulesKnownBadInputsRuleSet, AWSManagedRulesSQLiRuleSet
+
+#### 7.2.4 Cloudflare WAF audit
+
+Dashboard path: **Security → WAF → Custom rules / Managed rules / Rate limiting rules**.
+
+```
+[ ] Managed rulesets enabled: Cloudflare Managed Ruleset, Cloudflare OWASP Core Ruleset
+[ ] Managed ruleset version is current (lag > 90 days is a finding)
+[ ] Sensitivity: Low / Medium / High — document the choice per app tier
+[ ] Custom rules covering business-specific exposures
+[ ] Rate limiting per endpoint (not just global)
+[ ] Bot Fight Mode or Super Bot Fight Mode enabled appropriately
+[ ] "Skip" / "Allow" rules audited — they are the #1 cause of silent bypass
+[ ] "Under Attack Mode" — if permanently on, it masks real protection gaps
+[ ] Page Rules / Configuration Rules order: bypass rules must not precede security rules
+[ ] Authenticated Origin Pulls (mTLS CDN → origin) enabled to prevent direct-to-origin bypass
+[ ] API Shield deployed for API endpoints (schema validation, sequence analysis)
+```
+
+API-based audit:
+```bash
+# Requires API token with Zone.Firewall Services Read
+curl -s -H "Authorization: Bearer $CF_TOKEN" \
+  "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/firewall/waf/packages" | jq
+```
+
+### 7.3 Load balancer auditing
+
+**Load balancer product recognition:**
+
+| Category | Products |
+|----------|----------|
+| Cloud L4/L7 | AWS ALB / NLB / GLB / CLB; GCP GCLB, ILB, NLB, HTTP(S) LB; Azure Front Door, Application Gateway, Load Balancer, Traffic Manager |
+| Hardware appliance | F5 BIG-IP (LTM / DNS / AFM / ASM), Citrix ADC / NetScaler, A10 Thunder, Radware Alteon |
+| Software | HAProxy, NGINX (OSS + Plus), Envoy, Traefik, Caddy, Varnish |
+| K8s ingress controllers | ingress-nginx, Traefik, HAProxy Ingress, Contour, Kong Ingress, Ambassador/Emissary, NGINX Ingress (F5), GKE Gateway, AWS LoadBalancer Controller |
+| Service mesh gateways | Istio Ingress/Egress Gateway, Linkerd, Consul API Gateway, Envoy Gateway |
+| Bare-metal K8s | kube-vip, MetalLB, PureLB |
+
+#### 7.3.1 TLS configuration audit
+
+```bash
+# Gold-standard TLS audit tools
+testssl.sh https://app.example.com
+sslyze --regular app.example.com:443
+nmap --script ssl-enum-ciphers -p 443 app.example.com
+```
+
+**Required verifications:**
+
+```
+[ ] TLS 1.0 and 1.1 disabled (PCI-DSS 4.0 requires this)
+[ ] TLS 1.2+ only; TLS 1.3 preferred; 1.3 negotiated when client supports
+[ ] Cipher suite list contains no RC4, 3DES, NULL, EXPORT, ANON, MD5, SHA1
+[ ] Forward secrecy (ECDHE) for all modern clients
+[ ] OCSP stapling enabled; Must-Staple where feasible
+[ ] HSTS header present, max-age >= 6 months (31536000) for preload eligibility
+[ ] includeSubDomains and preload directives where appropriate
+[ ] Certificate validity: not expiring in <30 days, max lifetime <=398 days (CA/B Forum)
+[ ] Certificate key: RSA >=2048 or ECDSA P-256/P-384
+[ ] SAN list matches only intended hostnames (no accidental wildcards covering test envs)
+[ ] Intermediate chain complete (no missing intermediates)
+[ ] Session resumption: tickets use automated key rotation; no manual static keys
+[ ] Secure renegotiation only (RFC 5746)
+[ ] No BEAST/CRIME/BREACH/POODLE/Heartbleed/Ticketbleed/ROBOT indicators
+[ ] ALPN offers h2, http/1.1; h3 if QUIC deployed
+```
+
+#### 7.3.2 Backend health check audit
+
+```
+[ ] Health check path is dedicated (e.g., /healthz, /readyz), not the homepage
+[ ] Health check endpoint does not leak version, build info, or internal detail
+[ ] Health check auth: matches what the LB is configured to send
+[ ] Health check interval and threshold are aggressive enough to detect failures
+[ ] Unhealthy backend ejection actually stops routing (confirmed via logs)
+[ ] TLS / mTLS on health checks if backends expect it
+[ ] Passive health checks in addition to active where supported
+```
+
+#### 7.3.3 Sticky session audit
+
+```
+[ ] Session affinity enabled only where needed — prefer stateless backends
+[ ] Sticky cookie flags: HttpOnly, Secure, SameSite=Strict or Lax (NOT None without justification)
+[ ] Cookie name not predictable — defaults (AWSALB, AWSALBCORS, JSESSIONID) leak the LB vendor
+[ ] Stickiness lifetime bounded; no indefinite pinning
+[ ] Failover behaviour tested when pinned backend fails
+```
+
+#### 7.3.4 X-Forwarded-For chain audit (high-impact, often-missed finding)
+
+A misconfigured XFF chain lets an attacker spoof their IP, bypassing rate limits, IP allowlists, and geo-blocks.
+
+```
+[ ] Does the outermost LB overwrite (not append) client XFF so upstream cannot see client-supplied XFF?
+[ ] Does the origin trust the RIGHTMOST XFF entry from a trusted proxy (never the leftmost)?
+[ ] Trusted-proxy configuration at origin is explicit (nginx set_real_ip_from, Apache
+    RemoteIPInternalProxy, Rails config.action_dispatch.trusted_proxies)
+[ ] X-Real-IP and X-Forwarded-For are consistent
+[ ] X-Forwarded-Host, X-Forwarded-Proto, X-Forwarded-Port equally sanitized
+[ ] Attacker-supplied X-Client-IP, True-Client-IP, X-Original-Forwarded-For stripped or ignored
+```
+
+#### 7.3.5 F5 BIG-IP audit
+
+```bash
+# Via tmsh on the appliance
+tmsh show sys version
+tmsh list ltm virtual all-properties
+tmsh list ltm pool all-properties
+tmsh list ltm profile ssl-client
+tmsh list ltm profile ssl-server
+tmsh list security firewall policy
+tmsh list security dos device-config
+
+# iRules (LB-side code — review for injection bugs)
+tmsh list ltm rule
+# Audit iRules for: eval of user input, session handling bugs, HTTP header injection,
+# regex backtracking vulnerabilities (TCL regex is notorious)
+
+# Hygiene: TMUI admin interface MUST NOT be reachable from the internet.
+# Network policy should restrict TMUI (typically 8443, 443 on mgmt IF) to admin VPN CIDR.
+```
+
+Critical CVEs to cross-check patch level:
+- CVE-2020-5902 — TMUI unauthenticated RCE
+- CVE-2022-1388 — iControl REST authentication bypass
+- CVE-2023-46747 — TMUI auth bypass → RCE
+- CVE-2023-46748 — AJP smuggling via TMUI
+
+#### 7.3.6 Citrix ADC / NetScaler / Gateway audit
+
+```
+[ ] NetScaler IP (NSIP) and Management IP (MIP) NOT reachable from internet
+[ ] Admin accounts use MFA; default nsroot/nsroot must be changed
+[ ] Management firewall restricts to admin subnets
+[ ] Firmware version cross-checked against CISA KEV
+```
+
+Critical CVEs:
+- CVE-2019-19781 ("Shitrix") — directory traversal → RCE
+- CVE-2023-3519 — unauthenticated RCE
+- CVE-2023-4966 ("CitrixBleed") — session token memory leak
+
+#### 7.3.7 NGINX / HAProxy (software LB) audit
+
+```bash
+# NGINX effective config dump
+nginx -T 2>&1 | less
+
+# Key settings to grep
+grep -iE 'ssl_protocols|ssl_ciphers|ssl_prefer_server_ciphers|add_header|proxy_pass|proxy_set_header|real_ip_from|set_real_ip_from|merge_slashes|client_max_body_size|large_client_header_buffers|server_tokens' \
+  /etc/nginx/nginx.conf /etc/nginx/conf.d/*.conf 2>/dev/null
+```
+
+**Common NGINX bugs:**
+- Off-by-one in location matching: `/admin` vs `/admin/` behave differently
+- `proxy_pass` without trailing slash when location has one → path traversal
+- `merge_slashes off` enables `//../..` normalization attacks
+- `Host` header forwarded without validation → SSRF via Host
+- Large client body buffered to `/tmp` with world-readable permissions
+- Missing security headers (X-Frame-Options, CSP, Referrer-Policy)
+- `server_tokens on` leaks exact version
+- Regex-based location blocks matched before prefix blocks — order traps
+
+```bash
+# HAProxy
+haproxy -vv                       # version + features
+cat /etc/haproxy/haproxy.cfg
+
+# Audit:
+#   global section: chroot, user, no-splice-auto
+#   defaults: timeouts reasonable (connect 5s, client/server 30s typical)
+#   frontend: ACLs, http-request policies
+#   backend: server lines (verify ca-file for HTTPS backends, not "verify none")
+#   stats interface NOT exposed to internet (bind only to admin subnet)
+```
+
+#### 7.3.8 Ingress controller audit (Kubernetes)
+
+```bash
+# Identify deployed controller
+kubectl get ingressclass
+kubectl get pods -A -l app.kubernetes.io/name=ingress-nginx 2>/dev/null
+kubectl get pods -A -l app.kubernetes.io/name=traefik 2>/dev/null
+
+# Per-controller config map
+kubectl -n ingress-nginx get configmap ingress-nginx-controller -o yaml
+
+# Critical settings to verify:
+#   allow-snippet-annotations=false                (default false since 1.9)
+#   annotations-risk-level=Critical                (block risky annotations)
+#   ssl-protocols, ssl-ciphers                     (match TLS policy above)
+#   enable-modsecurity=true                        (if ModSec integration expected)
+#   use-forwarded-headers=true                     (with proper trusted proxy list)
+#   proxy-read-timeout, proxy-send-timeout         (DoS risk if too long)
+#   hsts-max-age, hsts-include-subdomains, hsts-preload
+
+# Per-ingress audit for snippet injection risk
+kubectl get ingress -A -o yaml | grep -A 3 'nginx.ingress.kubernetes.io/configuration-snippet\|nginx.ingress.kubernetes.io/server-snippet\|nginx.ingress.kubernetes.io/modsecurity-snippet\|nginx.ingress.kubernetes.io/auth-url\|nginx.ingress.kubernetes.io/auth-snippet'
+# Snippet annotations = RCE vectors if allowed from untrusted namespaces. Must be disabled
+# unless there's a strong reason and strict admission control restricts which namespaces
+# can use them.
+```
+
+Critical ingress-nginx CVEs to cross-check patch level:
+- CVE-2021-25742 — configuration snippet RCE
+- CVE-2022-4886 — path sanitization bypass
+- CVE-2023-5043, CVE-2023-5044 — nginx annotation RCE
+- CVE-2025-24513 / CVE-2025-1097 / CVE-2025-1098 / CVE-2025-24514 / CVE-2025-1974 — **IngressNightmare** (March 2025): unauthenticated cluster-wide RCE chain
+
+### 7.4 API gateway auditing
+
+API gateways serve as auth, rate limit, transform, and route layers. Audit them as both load balancers and access-control layers.
+
+**Products:**
+
+| Category | Products |
+|----------|----------|
+| Cloud-native | AWS API Gateway (REST / HTTP / WebSocket), GCP API Gateway + Apigee, Azure API Management, Oracle API Gateway |
+| Self-hosted | Kong (OSS + Enterprise), Tyk, KrakenD, WSO2, Gravitee, Ambassador/Emissary, Traefik |
+| K8s-native | Kong Ingress Controller, Ambassador, Gloo Edge, Envoy Gateway, Istio Gateway |
+| Service mesh as APIGW | Istio (AuthorizationPolicy + RequestAuthentication), Linkerd (HTTPRoute), Consul ingress |
+
+**Audit checklist:**
+
+```
+[ ] Authentication mechanisms in use: API key, JWT, OAuth 2.0 client credentials, mTLS, SAML,
+    basic auth (flag if present). Which is enforced on which route?
+[ ] Key / token rotation: automated; lifecycle events logged; max lifetime capped
+[ ] JWT validation: signing algorithm pinned (never `alg: none`, never symmetric-vs-asymmetric
+    confusion), issuer and audience validated, expiration enforced, clock skew tolerance bounded
+[ ] OAuth scopes: per-endpoint scope requirement, not global "api:access"
+[ ] Rate limiting per API-key AND per-endpoint (not just per-IP — trivially distributed)
+[ ] Quota and throttling: hard caps vs soft (429) responses; 429 includes Retry-After
+[ ] Request/response transformation: sensitive headers stripped before upstream; no PII in logs
+[ ] Path rewriting and normalization: no path confusion attacks (../, //, \, %2e%2e)
+[ ] Upstream TLS: mTLS where backends require; cert validation always on (never "verify none")
+[ ] Caching: sensitive data NOT cached; Vary and Cache-Control respected
+[ ] Analytics / logging: per-call logs to SIEM; PII redaction rules
+[ ] Versioning: /v1 vs /v2; deprecation calendar; old versions actually retired
+[ ] Developer portal: does NOT leak internal endpoints, staging URLs, or example real tokens
+[ ] Admin API exposure: Kong admin API (8001/8444) MUST NOT be reachable from internet
+[ ] Plugin/filter chain ORDER is correct: auth before rate-limit-by-consumer;
+    IP allowlist before auth; CORS after auth
+[ ] Schema validation (OpenAPI enforcement) on request + response
+[ ] API Shield / positive-security-model deployed for high-value APIs
+```
+
+**Kong-specific:**
+
+```bash
+# Admin API (must be internal-only) — inventory
+http :8001/services
+http :8001/routes
+http :8001/plugins
+http :8001/consumers
+
+# Declarative config if dbless
+cat /etc/kong/kong.yaml
+
+# Critical plugins to audit: key-auth, jwt, oauth2, rate-limiting, cors,
+# ip-restriction, bot-detection, request-transformer, response-transformer,
+# hmac-auth, basic-auth, acl, ldap-auth, opa
+```
+
+**AWS API Gateway-specific:**
+
+```bash
+# HTTP API (v2)
+aws apigatewayv2 get-apis
+aws apigatewayv2 get-routes      --api-id <api-id>
+aws apigatewayv2 get-authorizers --api-id <api-id>
+aws apigatewayv2 get-stages      --api-id <api-id>
+
+# REST API (v1)
+aws apigateway get-rest-apis
+aws apigateway get-resources --rest-api-id <id>
+
+# Verify:
+#   - Stage throttling limits set
+#   - WAF WebACL attached
+#   - Resource policy restricts to expected principals or VPC endpoints
+#   - CloudWatch logging at INFO or ERROR level (not OFF)
+#   - CloudTrail data events enabled for Execute-API
+#   - X-Ray tracing on for debuggability
+#   - Usage plans + API keys for partner access
+```
+
+### 7.5 Reverse proxy auditing
+
+Separate from API gateways, reverse proxies (NGINX, HAProxy, Apache, Envoy) are often deployed ad-hoc as glue layers. Each is a potential source of subtle bugs.
+
+**Common reverse proxy attack classes to test:**
+
+```
+[ ] HTTP Request Smuggling (CL.TE, TE.CL, TE.TE) between LB and backend
+    - Tools: smuggler.py (James Kettle / PortSwigger), h2cSmuggler
+    - Test HTTP/2 → HTTP/1.1 downgrade desync
+[ ] Host header confusion: does the proxy forward client-supplied Host, or a synthesized one?
+    - Can an attacker reach different virtual hosts by manipulating Host?
+[ ] Path traversal through proxy: /static/..%2F..%2Fadmin/
+    - NGINX merge_slashes behaviour
+    - Apache AllowEncodedSlashes default = Off
+    - Envoy path normalization
+[ ] CRLF header injection via query string or upstream response
+[ ] Proxy trust: preserves X-Forwarded-* from untrusted clients?
+[ ] Open redirect via upstream Location header
+[ ] SSRF: attacker-controlled upstream URL (proxy_pass with variable)
+[ ] WebSocket upgrade smuggling (WS → internal HTTP)
+[ ] h2 → h1 desync where CL/TE semantics differ
+[ ] Cache poisoning via unkeyed headers (X-Host, X-Forwarded-Host, X-Original-URL, X-Rewrite-URL)
+[ ] Second-order cache poisoning via stored response
+[ ] Range header DoS against upstream
+```
+
+Review NGINX `location` blocks for off-by-one slash issues, `rewrite` without `break`/`last`, `proxy_pass` trailing-slash mismatches, and `$uri` vs `$request_uri` in access logs (one normalizes, the other doesn't — matters for audit trails).
+
+### 7.6 TLS termination topology
+
+Map where TLS terminates and re-initiates. Each termination point is a decryption boundary; document which parties hold keys and who can observe plaintext.
+
+```
+[ ] Client → CDN (CDN holds cert and sees plaintext)
+[ ] CDN → Cloud LB (may be HTTPS with or without verification, or plaintext over private link)
+[ ] Cloud LB → Backend (HTTPS? mTLS? plaintext within VPC?)
+[ ] Pass-through TLS (LB forwards encrypted bytes; backend terminates — loses L7 features)
+[ ] End-to-end mTLS (zero-trust — every hop verifies peer cert)
+```
+
+**PCI-DSS 4.0 req 4.2.1** requires encrypted transmission of cardholder data across public networks; map explicitly for PCI scopes. FIPS 140-2/140-3 requirements apply in federal deployments.
+
+### 7.7 WAF / LB bypass testing
+
+Standardize bypass testing as part of Phase 3:
+
+```bash
+# Comprehensive WAF bypass scanner
+gotestwaf --url https://app.example.com/ --verbose
+
+# Payload mutation helper
+nowafpls --url https://app.example.com/search --param q
+
+# Manual test catalogue:
+#   1. HTTP method tunneling      X-HTTP-Method-Override: POST on GET request
+#   2. URL encoding               /admin → /%61dmin → /%2561dmin (double-encode)
+#   3. Unicode overlong           /admin → /ad%c0%adin
+#   4. Case variation             /admin → /ADMIN → /Admin
+#   5. Line ending injection      \r\n in headers
+#   6. Transfer-Encoding smuggling mixed with Content-Length
+#   7. HTTP/2 vs HTTP/1.1 header field name discrepancies
+#   8. Body size exceeding WAF inspection limit (often 8-32 KB)
+#   9. Null byte injection        /admin\x00.php
+#  10. SNI / Host header mismatch causing routing to an unprotected origin
+#  11. Cache poisoning            X-Forwarded-Host, X-Original-URL, X-Rewrite-URL
+#  12. Parameter pollution        q=safe&q=attack (WAF sees first, app sees last, or vice versa)
+#  13. JSON / XML nested deeply   some WAFs stop parsing beyond depth N
+#  14. GraphQL introspection + complex query DoS
+
+# Always test with a benign canary payload first (1=1 → 1' OR 1=1--)
+```
+
+### 7.8 Mass-exploited edge CVEs (check patch level)
+
+Every audit must enumerate edge device versions and cross-check CISA KEV. These are the top initial-access CVEs from the past few years:
+
+```
+F5 BIG-IP:
+  CVE-2020-5902    TMUI unauthenticated RCE
+  CVE-2022-1388    iControl REST authentication bypass
+  CVE-2023-46747   TMUI auth bypass → RCE
+  CVE-2023-46748   AJP smuggling via TMUI
+
+Citrix ADC / NetScaler / Gateway:
+  CVE-2019-19781   "Shitrix" directory traversal → RCE
+  CVE-2023-3519    unauthenticated RCE
+  CVE-2023-4966    "CitrixBleed" session token leak
+
+Ingress-NGINX:
+  CVE-2021-25742   configuration snippet RCE
+  CVE-2022-4886    path sanitization bypass
+  CVE-2023-5043    annotation-based RCE
+  CVE-2023-5044    path regex validation bypass
+  CVE-2025-24513, CVE-2025-1097, CVE-2025-1098, CVE-2025-24514, CVE-2025-1974
+                   IngressNightmare (unauthenticated cluster-wide RCE chain)
+
+HAProxy:
+  CVE-2021-40346   integer overflow request smuggling
+  CVE-2023-44487   HTTP/2 Rapid Reset (industry-wide)
+
+NGINX / nginx-plus:
+  CVE-2021-23017   DNS resolver off-by-one
+  CVE-2022-41741, CVE-2022-41742   mp4 module memory corruption
+  CVE-2024-7347    njs cache poisoning
+
+Apache HTTPD:
+  CVE-2021-41773, CVE-2021-42013   path traversal → RCE
+  CVE-2023-25690                   reverse-proxy HTTP smuggling
+
+Envoy / Istio Gateway:
+  CVE-2023-44487   HTTP/2 Rapid Reset
+  Various Istio ambient-mode authz bypasses
+
+Kong:
+  CVE-2024-32876   unauthenticated admin API access in dbless clusters
+
+Traefik:
+  CVE-2024-28869, CVE-2024-45410   header handling + rewrite bugs
+
+Fortinet FortiWeb:
+  CVE-2023-34992, CVE-2024-23108   management interface auth bypass
+
+AWS WAF / Cloudflare / managed:
+  Not patchable by customer — but managed rule group version LAG is a finding.
+  Lag > 90 days should trigger remediation.
+```
+
+Cross-reference every version finding against **CISA Known Exploited Vulnerabilities (KEV)** catalog before writing severity.
+
+## 8. Integration with Audit Phases
 
 **Phase 0.5 (Codebase Bootstrap)** — inventory network-as-code: Terraform security groups and firewall rules, NetworkPolicy manifests, Cilium/Calico CRDs, iptables-as-Ansible playbooks, CloudFormation network stacks. What the code declares should match what the runtime has.
 
 **Phase 1 (Recon Bootstrap)** — when node/kubectl/cloud-API access is granted in Step 0, run the network surface detection (section 3) as part of initial recon. The inventory drives which network dimensions need deeper audit.
 
-**Phase 3 (Security Assessment)** — network-layer testing is its own subsection covering all five dimensions (sections 2–6 of this reference). Findings feed into Phase 4 attack chains.
+**Phase 3 (Security Assessment)** — network-layer testing is its own subsection covering the audit dimensions (sections 2–7 of this reference: namespace access, services inventory, traffic flow journeys, network policy, host firewalls, and edge devices / WAF / LB / API gateway). Findings feed into Phase 4 attack chains.
 
 **Phase 4 (Attack Chain Analysis)** — network findings chain powerfully with application findings. The canonical chain: *SSRF in webapp → pod egress allows metadata service → retrieve IAM credentials → cloud API → data exfil*. Missing NetworkPolicies + unrestricted pod egress + reachable metadata service is the end-to-end credential-compromise chain.
 
@@ -1148,7 +1743,7 @@ If IPv6 is enabled on an interface but no v6 rules exist, the host is effectivel
 
 ---
 
-## 8. Network Security Checklist
+## 9. Network Security Checklist
 
 ```
 Namespace Access:
@@ -1214,6 +1809,40 @@ Host Firewall:
 [ ] 0.0.0.0/0 on management ports checked
 [ ] 0.0.0.0/0 on database ports checked
 [ ] Stale rules referencing deleted resources identified
+
+Edge / WAF / Load Balancer / API Gateway:
+[ ] Edge architecture inventoried and diagrammed (client → CDN → WAF → LB → ingress → pod)
+[ ] WAF product and version identified; firmware vs CISA KEV cross-checked
+[ ] WAF in prevention mode (not detection-only) for production
+[ ] Direct-to-origin bypass tested — origin rejects non-CDN source IPs (or mTLS / shared secret)
+[ ] Managed rule groups enabled (OWASP CRS, AWS common, Cloudflare managed); version current
+[ ] Body inspection size limit understood; oversized-body handling audited
+[ ] HTTP/2 and HTTP/3 request inspection verified
+[ ] WebSocket and gRPC paths covered or explicitly exempted with justification
+[ ] Rate limiting per-API-key and per-endpoint (not only per-IP)
+[ ] Bot management configured (challenge/CAPTCHA/fingerprint)
+[ ] WAF logs ingested to SIEM with anomaly alerting
+[ ] WAF bypass testing run (gotestwaf / nowafpls) on each release
+[ ] TLS config passes testssl.sh / sslyze (no TLS 1.0/1.1, no weak ciphers, HSTS present)
+[ ] Certificate inventory: expiration, key strength, SAN correctness, intermediate chain
+[ ] Backend health checks on dedicated endpoints that don't leak version info
+[ ] Sticky session cookies have HttpOnly + Secure + SameSite flags
+[ ] X-Forwarded-For chain: outer LB overwrites client XFF; origin trusts only rightmost from trusted proxy
+[ ] X-Forwarded-Host / X-Forwarded-Proto / X-Real-IP handling consistent with XFF
+[ ] Attacker-supplied X-Client-IP / True-Client-IP / X-Original-Forwarded-For stripped
+[ ] F5 TMUI / Citrix NSIP / HAProxy stats / Kong admin API NOT reachable from internet
+[ ] F5 / Citrix / NetScaler firmware patched against mass-exploited CVEs (listed in section 7.8)
+[ ] Ingress-nginx snippet annotations disabled (allow-snippet-annotations=false)
+[ ] Ingress-nginx patched against IngressNightmare (CVE-2025-24513 etc.)
+[ ] API gateway: JWT algorithm pinned (no alg:none), issuer/audience validated, expiration enforced
+[ ] API gateway: authentication required on ALL routes; no accidental public endpoints
+[ ] API gateway developer portal does not leak internal endpoints or staging URLs
+[ ] API gateway admin API (Kong 8001/8444, Apigee, etc.) internal-only
+[ ] Request smuggling tests run (CL.TE, TE.CL, TE.TE, h2→h1 desync)
+[ ] Path traversal via proxy tested (NGINX merge_slashes, Apache AllowEncodedSlashes)
+[ ] Cache poisoning via unkeyed headers tested (X-Host, X-Forwarded-Host, X-Original-URL)
+[ ] TLS termination topology mapped; each decryption boundary documented
+[ ] For PCI scope: PCI-DSS 4.0 req 4.2.1 encrypted transmission requirements met
 ```
 
 ---
@@ -1228,3 +1857,5 @@ Network findings should map to:
 - `references/frameworks/mitre-attack.md` — lateral movement (TA0008), network service scanning (T1046), exfiltration (TA0010)
 - `references/attack-chains.md` — chaining network findings with application findings
 - `references/frameworks/red-team.md` — when authorized for exploitation beyond audit
+- `references/frameworks/api-security.md` — API gateway and API-layer security in depth
+- `references/frameworks/owasp-complete.md` — OWASP Top 10 + WAF rule coverage reference
