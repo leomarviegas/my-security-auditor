@@ -2,17 +2,16 @@
 name: my-security-auditor
 description: >
   Comprehensive authorized security audit skill covering web, APIs, cloud, Kubernetes, mobile,
-  AI/LLM, microservices, SaaS (multi-tenancy, SSO, BYOK), plus red/blue/purple team operations,
-  source code review, formal AppSec testing (SAST/DAST/IAST/RASP/SCA), and network-layer auditing
-  (namespace access, services inventory, traffic flow journeys, NetworkPolicy, iptables/nftables,
-  VPN tunnels). Integrates OWASP (Top 10, API/Mobile/LLM/Cloud/K8s, ASVS, SAMM, WSTG, MASVS),
-  MITRE ATT&CK + D3FEND, OSSTMM with RAV, NIST RMF/CSF, FAIR, ISO 27001 family, CVSS/EPSS/SSVC,
-  Zero Trust, SOC 1/2/3, PCI-DSS v4.0.1, GDPR/LGPD/CCPA/HIPAA, customer trust (DPAs, CAIQ/SIG,
-  VDPs), SOC ops, detection engineering, threat hunting, adversary emulation (CALDERA, Atomic
-  Red Team, BAS), code review, SBOM/SPDX/CycloneDX. Triggers: "security audit", "pentest", "code
-  review", "SAST", "DAST", "SCA", "network audit", "firewall audit", "iptables", "nftables",
-  "NetworkPolicy", "VPN audit", "red team", "blue team", "purple team", "threat hunting", "OWASP",
-  "ISO 27001", "SOC 2", "GDPR", "LGPD", "SaaS security", "MITRE ATT&CK".
+  AI/LLM, microservices, SaaS (multi-tenancy, SSO, BYOK), red/blue/purple team ops, source code
+  review, formal AppSec testing (SAST/DAST/IAST/RASP/SCA), and network-layer audit (namespace
+  access, services inventory, traffic flows, NetworkPolicy, iptables/nftables, VPN). Integrates
+  OWASP (Top 10, API/Mobile/LLM/Cloud/K8s, ASVS, SAMM, WSTG, MASVS), MITRE ATT&CK, OSSTMM, NIST
+  RMF/CSF, FAIR, ISO 27001 family, CVSS/EPSS/SSVC, Zero Trust, SOC 1/2/3, PCI-DSS v4.0.1,
+  GDPR/LGPD/CCPA/HIPAA, customer trust (DPAs, CAIQ/SIG, VDPs), detection engineering, threat
+  hunting, adversary emulation, SBOM/SPDX/CycloneDX. Triggers: "security audit", "pentest",
+  "code review", "SAST", "DAST", "network audit", "firewall audit", "iptables", "nftables",
+  "NetworkPolicy", "VPN audit", "red team", "blue team", "purple team", "OWASP", "ISO 27001",
+  "SOC 2", "GDPR", "LGPD", "SaaS security", "MITRE ATT&CK".
 ---
 
 # Security Auditor
