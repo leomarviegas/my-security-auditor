@@ -429,7 +429,292 @@ cat /etc/openvpn/server.conf   # check cipher, auth, tls-version-min
 - Aggressive mode enabled
 - Split-tunnel when full-tunnel was intended (or vice versa, depending on policy)
 
-### 4.7 Path type: user-to-application
+### 4.7 Path type: client-to-site VPN (remote access)
+
+```
+[remote user device] → internet → VPN concentrator / ZTNA gateway → corporate network / specific apps
+```
+
+Client-to-site VPN is the traditional remote access model. Modern deployments increasingly replace it with ZTNA (Zero Trust Network Access), which publishes applications individually rather than granting network-level access. Audit both when they coexist.
+
+**Deployment types to recognize:**
+
+| Category | Examples |
+|----------|----------|
+| Classic IPsec IKEv2 RA | strongSwan, Libreswan, Windows built-in, Cisco ASA/Firepower IKEv2 |
+| SSL VPN concentrators | Cisco AnyConnect (Secure Client), Palo Alto GlobalProtect, Fortinet FortiClient / FortiGate SSL VPN, SonicWall NetExtender, Pulse / Ivanti Connect Secure, Citrix Gateway |
+| OpenVPN-based | OpenVPN Community, OpenVPN Access Server, OpenVPN Cloud / CloudConnexa |
+| WireGuard-based | Raw WireGuard, Tailscale, Netbird, Firezone, WG-Easy, WG Portal |
+| Overlay mesh | ZeroTier, OpenZiti, Nebula (Slack), Innernet |
+| ZTNA platforms | Cloudflare Access + WARP, Zscaler ZPA, Netskope Private Access, Palo Alto Prisma Access, Twingate, Banyan / SonicWall CSE, Perimeter 81, Check Point Harmony Connect |
+
+Identify which category the target uses; the audit commands and red flags differ significantly.
+
+**Authentication audit:**
+
+```
+[ ] What factors are required? (password, cert, TOTP, push, FIDO2, SAML assertion)
+[ ] Is MFA mandatory for ALL users, or can some bypass it? ("legacy devices", service accounts)
+[ ] Is SSO wired to the organisation's IdP (Okta, Entra ID, Google Workspace, Ping)?
+[ ] Client certificates: who signs them? Rotation policy? CRL/OCSP checked at connect?
+[ ] For FIDO2/WebAuthn: is phishing-resistant auth the default or an option?
+[ ] Local fallback users (break-glass) — who has them, how are they monitored?
+[ ] Is there a RADIUS or TACACS+ middleman? If so, review its config too.
+```
+
+**Authorization audit:**
+
+```
+[ ] Is access flat ("once in, everyone can reach everything")? This is the most common problem.
+[ ] Are groups from the IdP (Azure AD groups, Okta groups) mapped to VPN policies?
+[ ] Per-user or per-group ACLs restricting reachable subnets/apps?
+[ ] Application-level publishing (ZTNA) vs full network access (classic VPN)?
+[ ] Time-based conditions (business hours, maintenance windows)?
+[ ] Contextual conditions (device posture, geolocation, risk score)?
+```
+
+**Device posture / HIP check:**
+
+```
+[ ] Is device posture evaluated before granting access?
+[ ] What checks run: OS version, patch level, disk encryption (BitLocker/FileVault/LUKS),
+    EDR/AV presence (CrowdStrike, SentinelOne, Defender), screen lock policy, MDM enrolment?
+[ ] What happens on non-compliance: block, quarantine (limited access), warn-and-allow?
+[ ] Is BYOD handled differently from managed devices?
+[ ] Are posture checks re-evaluated periodically, or only at connect time?
+```
+
+**Split-tunnel vs full-tunnel policy:**
+
+| Mode | Pro | Con | Audit focus |
+|------|-----|-----|-------------|
+| Full-tunnel | Unified logging, DNS/web filtering applies, easier egress control | Latency, bandwidth cost at concentrator | Is actual user traffic traversing? DNS resolving via corporate? |
+| Split-tunnel | Performance, concentrator bandwidth preserved | Local malware has unfiltered egress; no corporate DNS/web filter on personal traffic | Are internal CIDRs the ONLY routes pushed? Is metadata service (169.254.169.254) excluded? |
+| Inverse split | Only specified risky traffic through VPN (e.g., to sanctioned SaaS) | Uncommon, complex | Clarity of policy |
+
+**OpenVPN server audit:**
+
+```bash
+# Key settings to grep for
+cat /etc/openvpn/server/server.conf | grep -iE   'cipher|auth |tls-version-min|tls-cipher|tls-crypt|tls-auth|duplicate-cn|client-cert-not-required|compress|comp-lzo|push|verify-client-cert|remote-cert-tls|ncp-ciphers|data-ciphers'
+
+# Critical red flags
+# - duplicate-cn                    → multiple users sharing a cert (no per-user accountability)
+# - client-cert-not-required        → password-only auth
+# - comp-lzo / compress              → VORACLE CVE-2018-0739 compression oracle
+# - cipher BF-CBC or DES-*          → deprecated
+# - tls-version-min < 1.2           → deprecated
+# - auth SHA1                        → weak HMAC
+# - no tls-crypt / tls-auth          → missing HMAC firewall on control channel
+
+# Running state
+sudo openvpn --status /run/openvpn-server/status-server.log
+sudo journalctl -u openvpn-server@server --since "1 day ago" | grep -iE 'auth|tls|handshake|error'
+```
+
+**WireGuard client-to-site audit:**
+
+```bash
+sudo cat /etc/wireguard/wg0.conf
+sudo wg show
+sudo wg show all dump   # PublicKey  PSK  Endpoint  AllowedIPs  latest-handshake  rx  tx  keepalive
+
+# Per [Peer] block, check:
+#   AllowedIPs = X  → this is BOTH the egress filter (source auth) AND the ingress filter.
+#   Overly broad AllowedIPs (e.g., 10.0.0.0/8 when only 10.42.1.0/24 is needed) = lateral movement risk.
+#   PresharedKey present (defence-in-depth against quantum + second factor)
+#   Endpoint not pinned = client can roam, which is fine, but audit the connection log separately.
+
+# WireGuard itself has NO built-in authentication beyond the public key. Identity must be
+# enforced by:
+#   (a) a control plane (Tailscale coordination, Netbird management, Firezone portal)
+#   (b) a wrapper that issues short-lived peer configs (e.g., Firezone + SAML)
+# Bare WireGuard without a control plane = static keys = no deprovisioning story = finding.
+```
+
+**strongSwan IKEv2 RA VPN audit:**
+
+```bash
+sudo swanctl --list-conns
+sudo swanctl --list-sas
+sudo swanctl --list-pols
+
+# Key settings in /etc/swanctl/conf.d/*.conf:
+#   proposals        → ike + esp cipher suites (reject aes128-sha1-modp1024)
+#   rekey_time       → session lifetime
+#   local { auths }  → server auth method (certificate / psk / eap-mschapv2 / eap-tls / eap-radius)
+#   remote { auths } → client auth method (prefer eap-tls or eap-radius over eap-mschapv2)
+#   pools            → assigned IP ranges for clients
+#   rightdns         → pushed DNS
+#   rightsourceip    → client tunnel IP
+
+# EAP-MSCHAPv2 alone is password-only — flag if not combined with cert or MFA-via-RADIUS.
+```
+
+**Cisco AnyConnect / GlobalProtect / FortiClient audit:**
+
+Access the management console / firewall manager (ASDM, Panorama, FortiManager) and export:
+
+```
+[ ] RA VPN profile / tunnel group / portal config
+[ ] Connection profiles: AAA method, group policy binding
+[ ] Group policies: split-tunnel ACL, DNS servers, session timeouts, banner
+[ ] Host scan / HIP objects / HIP profiles: what posture is checked, what action on failure
+[ ] Certificate maps / authorization overrides
+[ ] SAML IdP metadata (entity ID, ACS URL, signing cert rotation)
+[ ] WebVPN / clientless portal: any bookmarks to internal apps = audit those too
+```
+
+Known mass-exploited CVEs to check patch level against:
+- Pulse/Ivanti Connect Secure — CVE-2019-11510, CVE-2023-46805, CVE-2024-21887
+- Citrix ADC/Gateway — CVE-2019-19781, CVE-2023-3519, CitrixBleed CVE-2023-4966
+- Fortinet SSL VPN — CVE-2022-42475, CVE-2022-40684, CVE-2024-21762
+- Cisco ASA / Firepower — CVE-2020-3452, CVE-2024-20481 (ArcaneDoor)
+- SonicWall — CVE-2021-20016, CVE-2024-40766
+- Palo Alto GlobalProtect — CVE-2024-3400
+
+An unpatched RA VPN concentrator is one of the highest-probability initial access vectors. Always check firmware/patch version against vendor advisories.
+
+**Tailscale audit:**
+
+```bash
+tailscale status
+tailscale netcheck
+tailscale whois <peer-ip>
+sudo tailscale debug daemon-goroutines
+```
+
+Admin console (https://login.tailscale.com/admin):
+```
+[ ] ACL policy (HuJSON) — least privilege, no * → *, tags scoped
+[ ] Tagged devices mapped to human accountability
+[ ] Device posture integrations (CrowdStrike, Intune, Jamf, Kolide)
+[ ] 2FA enforced on admin console
+[ ] SSH via Tailscale SSH (CA-based) vs host-managed keys
+[ ] Exit nodes: who can use them, what traffic is exposed
+[ ] Auth keys: are any reusable / non-expiring ones present? (risk)
+[ ] Share list: tailnet-to-tailnet sharing, scope
+[ ] Logs streaming to SIEM
+```
+
+**Netbird / Firezone / ZeroTier audit:**
+
+```bash
+# Netbird client
+sudo netbird status
+sudo netbird debug bundle
+
+# Firezone (self-hosted)
+# Check admin portal: actors, resources, policies, identity providers
+
+# ZeroTier
+sudo zerotier-cli info
+sudo zerotier-cli listnetworks -j
+
+# ZeroTier Central (https://my.zerotier.com): network rules (flow table), capabilities, tags,
+# members, private vs public network, auto-assign pool
+```
+
+**ZTNA platform audit (Cloudflare Access, Zscaler ZPA, Twingate, etc.):**
+
+ZTNA replaces "connect to network, then reach apps" with "authenticate, then reach only this app." Audit focuses shift from tunnel crypto to application publishing and identity policy.
+
+```
+[ ] Application inventory: which apps are published behind ZTNA? Are there apps not yet published?
+[ ] Per-app policy: who can access, from what device posture, requiring which MFA factor
+[ ] Identity provider integration: IdP, group claim mapping, JIT provisioning, SCIM deprovisioning
+[ ] Device posture integration (Cloudflare WARP client, Zscaler Client Connector, Netskope Client)
+[ ] Short-lived session tokens? Reauth interval?
+[ ] Connector (app-side) health and HA: tunnels into the gateway from each deployed app
+[ ] Split DNS for internal FQDNs
+[ ] Legacy VPN bypass: is there still a traditional VPN for apps not yet migrated? Audit it too.
+[ ] "Trusted network" bypass: if you're on the corporate LAN, do ZTNA policies still apply, or is there a perimeter exception that undermines the model?
+[ ] Logs ingested to SIEM; alerting on impossible travel, new device, anomalous app usage
+[ ] Admin console access itself protected with MFA + IP allowlist
+```
+
+**DNS leak testing (client-side, while connected):**
+
+A correctly configured client-to-site VPN should not leak DNS queries to the ISP resolver.
+
+```bash
+# From the client, with the VPN connected:
+dig +short whoami.akamai.net @8.8.8.8
+# Expected: returns the VPN gateway's public IP or the corporate egress, NOT the ISP's IP
+# If it returns your ISP's IP, DNS is leaking.
+
+# Browser-based leak test: https://dnsleaktest.com (extended test)
+
+# On Linux, verify resolver actually points to pushed DNS:
+resolvectl status
+cat /etc/resolv.conf
+```
+
+**Kill switch / failure-mode audit:**
+
+```
+[ ] What happens if the tunnel drops mid-session?
+    - Ideal: kill switch — all non-VPN traffic blocked until reconnect (OpenVPN `route` with no
+      `redirect-gateway def1` fallback; WireGuard with `PostDown` rules; GlobalProtect "Always On")
+    - Risky: silent fall-through to local network
+[ ] What happens if concentrator is unreachable? HA across regions? Client retry policy?
+[ ] Is there a "captive portal" exception that opens a backdoor during Wi-Fi login?
+```
+
+**Offboarding lifecycle:**
+
+```
+[ ] When an employee is terminated, how quickly does VPN access revoke?
+    - Target: < 15 minutes (IdP-triggered session termination)
+    - Acceptable: end of session + IdP block on reconnect
+    - Unacceptable: next certificate renewal cycle (could be months)
+[ ] Are long-lived tokens / reusable auth keys / static WireGuard peer configs revoked?
+[ ] Is the SIEM alerting on access attempts from terminated user identities?
+```
+
+**Logging and monitoring:**
+
+```
+[ ] Connection events logged: login, logout, disconnect reason, bytes transferred
+[ ] Authentication failures logged with source IP and username
+[ ] Device posture failures logged
+[ ] Policy violations (ACL hits, blocked apps) logged
+[ ] Anomalous behaviour: impossible travel, new device, unusual hours, geo-rare locations
+[ ] Logs integrated into SIEM; retention matches compliance regime
+[ ] Logs protected from tampering by authenticated users
+```
+
+**Red flags for client-to-site VPN:**
+- No MFA on VPN login, or MFA bypass for "legacy devices"
+- Shared credentials / team accounts
+- Password-only auth (no client cert, no SAML, no MFA)
+- Local user database instead of IdP (slow deprovisioning)
+- Full-tunnel without DNS/web filtering, or split-tunnel without client egress control
+- WireGuard `AllowedIPs = 0.0.0.0/0` on peers that need only specific subnets
+- Bare WireGuard (no control plane) with static peer keys — no deprovisioning story
+- OpenVPN `duplicate-cn` or `client-cert-not-required`
+- Certificate lifetimes > 1 year without automated rotation
+- No device posture check; BYOD connects at any patch level
+- Unpatched concentrator firmware (see CVE list above)
+- VPN admin console reachable from the public internet without allowlist
+- No idle session timeout
+- DNS leak on client-side (leaks to ISP resolver)
+- No kill switch (traffic falls through to local network on tunnel drop)
+- Offboarding takes > 24 hours to revoke VPN access
+- SIEM not ingesting VPN logs
+- Legacy VPN coexisting with ZTNA but not separately audited
+
+**Zero Trust migration context:**
+
+Traditional RA VPN grants "inside the network" trust after authentication; this violates Zero Trust principles. Recommended migration path:
+
+1. **Short-term (harden existing VPN)** — MFA mandatory, IdP integration, device posture check, strict group-based ACLs, patch concentrator, ingest logs to SIEM.
+2. **Medium-term (deploy ZTNA alongside)** — stand up a ZTNA platform, publish apps one tier at a time (start with web apps, then TCP-based internal tools), migrate user populations department by department.
+3. **Long-term (retire classic VPN)** — remove network-level access; all access is per-application and identity-aware. Exception process for legacy protocols that ZTNA can't yet publish.
+
+Map current state against `references/frameworks/zero-trust.md` CISA ZTMM maturity stages.
+
+### 4.8 Path type: user-to-application
 
 ```
 [user browser] → DNS → CDN/WAF → LB → ingress controller → service → pod
@@ -460,7 +745,7 @@ testssl.sh <fqdn>
 - HSTS enforced? Certificate chain valid? OCSP stapling?
 - CDN-origin split allowing origin bypass?
 
-### 4.8 Per-path output template
+### 4.9 Per-path output template
 
 For each significant traffic journey, document:
 
@@ -894,6 +1179,13 @@ Traffic Flow:
 [ ] Pod-to-external paths traced (metadata service checked!)
 [ ] Node-to-node control plane paths checked for restriction
 [ ] Site-to-site VPN tunnels audited (IPsec, WireGuard, OpenVPN)
+[ ] Client-to-site (remote access) VPN audited: concentrator, auth, posture, split/full tunnel
+[ ] VPN MFA enforcement verified for all users (no "legacy device" exemption)
+[ ] VPN concentrator firmware patched against current mass-exploited CVEs
+[ ] DNS leak test from client with VPN connected
+[ ] Kill switch / tunnel-drop behaviour verified
+[ ] Offboarding revokes VPN access within acceptable SLA
+[ ] ZTNA platform policies reviewed (if deployed alongside or replacing VPN)
 [ ] User-to-app paths traced (DNS, CDN, LB, ingress, pod)
 [ ] TLS termination points identified; back-end mTLS verified
 
