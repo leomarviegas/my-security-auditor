@@ -4,7 +4,7 @@ A Claude Code skill for comprehensive authorized security audits.
 
 ## What this skill does
 
-Structured, attacker-minded security assessment covering web applications, APIs, cloud, Kubernetes, microservices, mobile, AI/LLM, and SaaS. Integrates all major security frameworks (OWASP, MITRE ATT&CK, NIST, ISO 27001, SOC 2, PCI-DSS, GDPR/LGPD) plus red/blue/purple team operations, source code review, and formal AppSec testing methods (SAST/DAST/IAST/RASP/SCA).
+Structured, attacker-minded security assessment covering web applications, APIs, cloud, Kubernetes, microservices, mobile, AI/LLM, SaaS, and the network layer. Integrates all major security frameworks (OWASP, MITRE ATT&CK, NIST, ISO 27001, SOC 2, PCI-DSS, GDPR/LGPD) plus red/blue/purple team operations, source code review, formal AppSec testing methods (SAST/DAST/IAST/RASP/SCA), and a full network audit covering namespace access, services inventory, traffic flow journeys, NetworkPolicy, and host/cloud firewalls.
 
 ## Installation
 
@@ -23,9 +23,9 @@ git clone https://github.com/leomarviegas/my-security-auditor.git
 ln -s $(pwd)/my-security-auditor/my-security-auditor ~/.claude/skills/my-security-auditor
 ```
 
-## What's included (v1.1)
+## What's included (v1.2)
 
-31 files across SKILL.md and 5 core workflow references + 25 framework references:
+32 files across SKILL.md and 5 core workflow references + 26 framework references:
 
 ### Core workflow
 - `SKILL.md` — Orchestrator with 7-phase workflow (Step 0, Phase 0.5 codebase bootstrap, Phases 1–6)
@@ -35,7 +35,7 @@ ln -s $(pwd)/my-security-auditor/my-security-auditor ~/.claude/skills/my-securit
 - `references/report-template.md` — Multi-audience reporting
 - `references/multi-model-review.md` — Gemini/Codex/Qwen/Ollama orchestration
 
-### Framework references (25 files)
+### Framework references (26 files)
 
 **OWASP family:**
 - `owasp-complete.md` — Top 10, API/Mobile/LLM/Cloud-Native/K8s Top 10, ASVS, SAMM, WSTG, STRIDE/PASTA/LINDDUN
@@ -69,12 +69,15 @@ ln -s $(pwd)/my-security-auditor/my-security-auditor ~/.claude/skills/my-securit
 
 **Engagement types:**
 - `red-team.md` — Kill chain, TTPs, C2 frameworks, OPSEC, social engineering
-- `blue-team.md` — SOC operations, SOC-CMM, detection engineering, SIEM/EDR/XDR, threat hunting, IR
+- `blue-team.md` — SOC operations, SOC-CMM, detection engineering, SIEM/EDR/XDR/NDR, threat hunting, IR
 - `purple-team.md` — Atomic Red Team, CALDERA, BAS, adversary emulation, detection feedback loop
 
-**Code analysis (new in v1.1):**
+**Code analysis (v1.1):**
 - `code-analysis.md` — Codebase recon, summarization, per-language patterns (JS/TS, Python, Go, Java, Ruby, Rust, PHP), per-framework (Express, FastAPI, Spring, Django, Rails), taint analysis, auth/authz review, crypto review, git history, config-as-code
 - `appsec-testing-methods.md` — SAST/DAST/IAST/RASP/SCA methodology, tool selection, SDLC integration
+
+**Network audit (new in v1.2):**
+- `network-security-audit.md` — Namespace access (Linux netns + K8s), network services inventory, traffic flow journeys (pod-to-pod, pod-to-external, node-to-node, site-to-site VPN, user-to-app), NetworkPolicy auditing (default-deny, DNS egress, CNI extensions, service mesh L7), host firewall auditing (iptables, nftables, firewalld, UFW, pf, Windows, AWS SG/NACL, GCP, Azure NSG)
 
 ## Usage
 
@@ -86,8 +89,10 @@ Trigger in Claude Code with phrases like:
 - "Red team engagement against [target]"
 - "Blue team maturity assessment"
 - "Purple team exercise validating detections for [adversary]"
+- "Network audit covering NetworkPolicies and iptables"
+- "Firewall audit and traffic flow review for our K8s cluster"
 
-The skill will request authorization, scope, and engagement type before proceeding.
+The skill will request authorization, scope, engagement type, source code access, and network/infra access before proceeding.
 
 ## Note on this repository
 
@@ -99,5 +104,6 @@ Apache License 2.0
 
 ## Versions
 
+- **v1.2** — Added `network-security-audit.md` (namespace access, services inventory, traffic flow journeys, NetworkPolicy, host and cloud firewall auditing); Step 0 question for network/infra access; network-layer integration throughout phases
 - **v1.1** — Added `code-analysis.md` and `appsec-testing-methods.md` (source code review + formal AppSec testing methodology)
 - **v1.0** — Initial release with 29 files covering web, APIs, cloud, K8s, mobile, AI/LLM, SaaS, red/blue/purple teams, all major compliance frameworks

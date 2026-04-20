@@ -6,21 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
-## [1.2.0] — 2026-04-18
+## [1.2.0] — 2026-04-19
 
 ### Added
 
-- **`references/frameworks/network-security-audit.md`** — Network-layer security auditing reference. Covers Linux network namespaces (`netns`) and Kubernetes namespaces (enumeration, intra- and extra-namespace access testing, `hostNetwork` / `hostPort` / capability review); network services inventory at host and cluster level (listening sockets, Services, Ingress, Gateway API, Endpoints, NodePort enumeration); end-to-end traffic flow journeys (pod-to-pod same namespace, pod-to-pod cross namespace, pod-to-external, node-to-node control/data plane, site-to-site VPN with IPsec/WireGuard/OpenVPN, user-to-application through DNS/CDN/WAF/LB/Ingress); NetworkPolicy auditing (default-deny baseline, coverage checks, CIDR rules, Cilium/Calico/Antrea CRD extensions, Istio/Linkerd/Consul L7 policies, empirical effectiveness testing); host firewall auditing (iptables, nftables, firewalld, UFW, pf, Windows Firewall, dual-stack IPv6 coverage, cloud-layer firewall adjunct review for AWS/GCP/Azure).
+- **`references/frameworks/network-security-audit.md`** — Network-layer audit reference covering the five dimensions of network security assessment:
+  1. **Namespace access** (intra and extra) — Linux network namespace enumeration (`ip netns`, `/proc/*/ns/net`, `nsenter`), Kubernetes namespace enumeration, probe-pod testing of intra-namespace and cross-namespace reachability, ServiceAccount token mount review, `hostNetwork`/`hostPID` detection, cloud metadata service reachability testing.
+  2. **Network services inventory** — per-host (`ss -tulnpe`, `lsof`, `ip addr`, `ip route`, `ip rule`), per-netns listener loop, Kubernetes `svc`/`ingress`/`gateway-api`/`endpoints`/`endpointslices`, `hostPort`/`hostNetwork` pod detection, external scan cross-reference.
+  3. **Traffic flow journeys** — nine-step methodology (source, DNS, routing, egress filter, transit, ingress filter, destination, encryption, logging); six path types covered: pod-to-pod same-namespace, pod-to-pod cross-namespace, pod-to-external (with cloud metadata warning), node-to-node (kubelet 10250, kube-apiserver 6443, etcd 2379/2380, overlay VXLAN 8472/Geneve 6081, BGP 179), site-to-site VPN (IPsec `ip xfrm`, WireGuard `wg show`, strongSwan, OpenVPN; red flags for IKEv1, weak PSK, 0.0.0.0/0 selectors), user-to-application (dig, mtr, traceroute, sslyze, testssl.sh).
+  4. **Network policy auditing** — default-deny NetworkPolicy YAML patterns and per-namespace coverage check script; DNS egress allow pattern; selector correctness (`kubernetes.io/metadata.name` post-1.21); port/protocol specificity; egress blast radius with RFC1918 + 169.254 + 127.0.0.0/8 exclusions; empirical testing with netshoot + hubble; CNI extensions matrix (Cilium CNP/CCNP, Calico GlobalNetworkPolicy, Antrea ClusterNetworkPolicy); service mesh L7 (Istio AuthorizationPolicy + PeerAuthentication, Linkerd Server/ServerAuthorization, Consul ServiceIntentions).
+  5. **Host firewall auditing** — iptables all tables (filter/nat/mangle/raw, chain ordering, Kubernetes-specific chains KUBE-*, DOCKER, CILIUM-*, cali-*), ip6tables separately, nftables (inet family, sets, maps, dual-stack), firewalld (zones, rich rules, direct rules), UFW (before/user/after), pf (BSD/macOS), Windows Firewall; cloud adjunct: AWS describe-security-groups/describe-network-acls, GCP gcloud compute firewall-rules, Azure az network nsg; IPv6 dual-stack gotcha; findings tables.
 
 ### Changed
 
-- **SKILL.md framework table** adds a row for `network-security-audit.md` with the trigger phrases for network auditing (namespace access, service inventory, traffic flow journeys, network policies, firewall auditing, VPN review, iptables, nftables).
+- **SKILL.md description** expanded with network audit triggers (`network audit`, `firewall audit`, `iptables`, `nftables`, `NetworkPolicy`, `VPN audit`). Stays under the 1024-character limit.
 
-- **SKILL.md Phase 3** now routes to `network-security-audit.md` when the target has Linux hosts, Kubernetes clusters, VPN infrastructure, or any scenario requiring network-layer isolation validation. This complements the existing routing to `kubernetes-security.md` (which covers RBAC and API surface but not the network plane in depth) and `cloud-security.md` (which covers cloud-level filters but not host firewalls or K8s NetworkPolicies).
+- **SKILL.md framework table** adds row for `network-security-audit.md` describing all five audit dimensions.
+
+- **SKILL.md Step 0 question 8** (new): "Network / infrastructure access" with four levels (none / node-shell / kubectl / cloud-api) routing to appropriate references.
+
+- **SKILL.md scope template** now includes network/infra access line.
+
+- **SKILL.md Safety Rules** — Always-allowed adds read-only network-layer inspection on authorized hosts (`ss`, `iptables -L`, `nft list ruleset`, `kubectl get netpol`, `aws ec2 describe-security-groups`).
+
+- **SKILL.md Phase 0.5 (Codebase Bootstrap)** — adds instruction to inventory network-as-code (Terraform SGs, CloudFormation stacks, NetworkPolicy manifests, Cilium/Calico/Antrea CRDs, iptables-as-Ansible).
+
+- **SKILL.md Phase 1 (Recon Bootstrap)** — adds network-surface detection when Step 0 granted any network/infra access.
+
+- **SKILL.md Phase 3 (Security Assessment)** — new "Network-layer testing" subsection enumerating the five audit dimensions.
+
+- **SKILL.md Phase 4 (Attack Chain Analysis)** — adds network chain component note (SSRF + unrestricted pod egress + reachable metadata service = credential-compromise chain).
+
+- **SKILL.md Phase 6 (Final Reporting)** — adds network-finding reporting conventions (exact rule/policy/manifest reference, proposed replacement rule, MITRE ATT&CK TA0008/T1046/T1041/T1133, CIS benchmark citation).
+
+- **SKILL.md Key Principles** — "Think like an attacker" adds lateral movement in flat networks; "Think in trust boundaries" adds pod and namespace trust dimensions; "Vibecoder awareness" adds missing NetworkPolicies + unrestricted pod egress + reachable metadata service as the canonical AI-generated infra shortcut.
 
 ### File count
 
-- 32 files total, approximately 22,000 lines
+- 32 files total
 - 1 `SKILL.md` + 5 core workflow references + 26 framework references
 
 ---
