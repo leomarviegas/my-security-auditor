@@ -5,13 +5,14 @@ description: >
   AI/LLM, microservices, SaaS (multi-tenancy, SSO, BYOK), red/blue/purple team ops, source code
   review, formal AppSec testing (SAST/DAST/IAST/RASP/SCA), and network-layer audit (namespace
   access, services inventory, traffic flows, NetworkPolicy, iptables/nftables, VPN). Integrates
-  OWASP (Top 10, API/Mobile/LLM/Cloud/K8s, ASVS, SAMM, WSTG, MASVS), MITRE ATT&CK, OSSTMM, NIST
+  OWASP (Top 10, API/Mobile/LLM/Cloud/K8s, ASVS, SAMM, WSTG, MASVS), MITRE ATT&CK + ATLAS, OSSTMM, NIST
   RMF/CSF, FAIR, ISO 27001 family, CVSS/EPSS/SSVC, Zero Trust, SOC 1/2/3, PCI-DSS v4.0.1,
   GDPR/LGPD/CCPA/HIPAA, customer trust (DPAs, CAIQ/SIG, VDPs), detection engineering, threat
   hunting, adversary emulation, SBOM/SPDX/CycloneDX. Triggers: "security audit", "pentest",
   "code review", "SAST", "DAST", "network audit", "firewall audit", "iptables", "nftables",
   "NetworkPolicy", "VPN audit", "red team", "blue team", "purple team", "OWASP", "ISO 27001",
-  "SOC 2", "GDPR", "LGPD", "SaaS security", "MITRE ATT&CK".
+  "SOC 2", "GDPR", "LGPD", "SaaS security", "MITRE ATT&CK", "MITRE ATLAS",
+  "adversarial ML".
 ---
 
 # Security Auditor
@@ -39,7 +40,8 @@ Read the relevant reference files based on the phase you're entering:
 | Formal security requirements / verification | `references/frameworks/owasp-asvs.md` |
 | REST / GraphQL / gRPC / WebSocket APIs | `references/frameworks/api-security.md` |
 | Has mobile apps | `references/frameworks/mobile-security.md` |
-| Uses AI / LLM features | `references/frameworks/ai-llm-security.md` |
+| Uses AI / LLM features (vulnerability lens) | `references/frameworks/ai-llm-security.md` |
+| Uses AI / LLM features (adversary lens — pair with ai-llm-security.md) | `references/frameworks/mitre-atlas.md` — MITRE ATLAS tactics & techniques (AML.TA0001–TA0013, AML.T0xxx), case studies (CS0000–CS0027+), mitigations (M0000–M0015), ATLAS↔OWASP LLM↔ML Top 10 cross-mapping, ATLAS-anchored audit checklist |
 | Risk quantification needed | `references/frameworks/risk-management.md` |
 | Compliance / certification | `references/frameworks/iso-standards.md` |
 | SOC audit readiness / compliance | `references/frameworks/soc-auditing.md` |
@@ -212,7 +214,7 @@ Test systematically against all applicable security frameworks.
 - SaaS → `saas-security.md`
 - Privacy → `privacy-compliance.md`
 - Mobile → `mobile-security.md`
-- AI/LLM → `ai-llm-security.md`
+- AI/LLM → `ai-llm-security.md` (vulnerability classes) AND `mitre-atlas.md` (adversary tactics/techniques: AML.T0051 prompt injection, AML.T0054 jailbreak, AML.T0024 model/data extraction, AML.T0010 supply chain, AML.T0019/T0020 poisoning, AML.T0029 DoS / cost harvesting; with ATLAS↔OWASP cross-citations for reports)
 
 **Engagement-type-specific:**
 - Red team → `red-team.md`
@@ -248,6 +250,8 @@ Test systematically against all applicable security frameworks.
 
 Connect findings into realistic attacker paths: recon → foothold → privilege escalation → data access → persistence.
 
+**AI/ML chain component** — when the target has AI/ML surface, look for ATLAS-anchored chains: indirect prompt injection (AML.T0051.001) → plugin/tool compromise (AML.T0053) → exfiltration via inference API (AML.T0024); supply-chain compromise (AML.T0010) → backdoor model (AML.T0018) → integrity erosion (AML.T0031); model extraction (AML.T0024.002) → proxy model (AML.T0005) → transfer attack (AML.T0043.002) → evasion (AML.T0015); hallucinated package (AML.T0058) → developer install → code execution (AML.T0050). See `references/frameworks/mitre-atlas.md` §8 for the full chain catalogue.
+
 **Network chain component** — when network findings are present, look for the canonical lateral-movement chain: SSRF or RCE in pod → unrestricted pod egress → cloud metadata service reachable → IAM role credentials retrieved → cloud API abuse → data exfil. Missing NetworkPolicies + permissive egress + reachable metadata service is the end-to-end credential-compromise chain — flag each link individually and the chain as a whole.
 
 **Outputs:** Documented attack chains with severity and remediation priority.
@@ -267,7 +271,7 @@ One model proposes findings, at least two others challenge, a false-positive rev
 
 **Deliverables:** executive summary, asset/route inventory, internal link sweep, findings report with framework mappings, attack chains, remediation plan, evidence bundle.
 
-**Framework enrichment per finding:** OWASP category, CWE, CVSS v4.0, MITRE ATT&CK, OSSTMM classification, NIST 800-53, ISO 27001 Annex A, SOC 2 CC mapping, PCI-DSS requirement, SaaS tenancy impact, privacy regulation mapping, remediation SLA.
+**Framework enrichment per finding:** OWASP category (incl. LLM Top 10 / ML Top 10 for AI findings), CWE, CVSS v4.0, MITRE ATT&CK, **MITRE ATLAS technique ID(s) for AI/ML findings (AML.T0xxx) plus relevant case study (AML.CS00xx)**, OSSTMM classification, NIST 800-53, ISO 27001 Annex A, SOC 2 CC mapping, PCI-DSS requirement, SaaS tenancy impact, privacy regulation mapping, remediation SLA.
 
 **Network finding reporting conventions** — each network finding must include: (a) exact rule/policy/manifest reference (file path + line number for IaC, or `namespace/name` for K8s resources, or `sg-xxxxxx` for cloud SGs), (b) proposed replacement rule as YAML or command-line form, (c) MITRE ATT&CK mapping (typically TA0008 Lateral Movement, T1046 Network Service Scanning, T1041 Exfiltration Over C2, T1133 External Remote Services), (d) CIS benchmark citation when applicable (e.g., CIS AWS 5.2 for SSH-from-0.0.0.0/0).
 
